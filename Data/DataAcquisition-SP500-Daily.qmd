@@ -1,0 +1,271 @@
+---
+title: "Data Acquisition"
+subtitle: "Using API to pull Daily SP500 prices"
+author: "Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/"
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  echo: true
+---
+
+```{r}
+#| echo: false
+cat("\014")   # clear console
+rm(list = ls()) # Clear the workspace
+```
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+
+source(here("Supporting", "PackageLoads.R")) 
+```
+
+# Data Acquisition
+
+## Get tickers
+
+```{r}
+sp500_members <- tq_index("SP500")
+tickers <- sp500_members$symbol
+
+```
+
+## Set Date Range
+
+```{r}
+end_date   <- as.Date("2025-11-30")
+start_date <- end_date %m-% years(10)
+start_date
+```
+
+## Get index prices (SP500 as index)
+
+```{r}
+spx_symbol <- "^GSPC"
+
+spx <- tq_get(
+  spx_symbol,
+  from = start_date,
+  to   = end_date,
+  get  = "stock.prices"
+) %>%
+  select(date,symbol,adjusted)
+```
+
+## Get constituent prices
+
+```{r}
+sp500.constituents <- tq_get(
+  tickers,
+  from = start_date,
+  to   = end_date,
+  get  = "stock.prices"
+) %>%
+  select(date,symbol,adjusted)
+```
+
+## Combine
+
+Task: Clean spx and sp500.constituents dataframes to have consistent column names and order
+
+```{r}
+spx <- spx %>%
+  ungroup() %>%
+  rename(Date = date, ticker = symbol,adj_close = adjusted) %>%
+  mutate(ticker = recode(ticker, "^GSPC" = "SP500")) %>%
+  select(ticker, Date, adj_close, everything())
+
+sp500 <- sp500.constituents %>%
+  ungroup() %>%
+  rename(Date = date, ticker = symbol, adj_close = adjusted) %>%
+  select(ticker, Date, adj_close, everything())
+```
+
+# Combine with bind_rows, then resolve duplicate ticker+Date rows.
+
+# Rule: if multiple adj_close values appear for same ticker+Date, take the median of non-missing values.
+
+```{r}
+Price_Long <- bind_rows(spx, sp500)
+```
+
+# Clean / Diagnostics
+
+## Fraction missing by ticker
+
+```{r}
+missing_by_ticker <- Price_Long %>%
+  group_by(ticker) %>%
+  summarise(
+    missing_frac = mean(is.na(adj_close)),
+    n_obs = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(missing_frac))
+
+missing_by_ticker %>% head(10)
+```
+
+## Fraction missing by date
+
+```{r}
+missing_by_date <- Price_Long %>%
+  group_by(Date) %>%
+  summarise(
+    missing_frac = mean(is.na(adj_close)),
+    n_tickers = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(Date)
+
+head(missing_by_date)
+tail(missing_by_date)
+```
+
+## Entry dates for each ticker (first non-missing date)
+
+```{r}
+entry_dates <- Price_Long %>%
+  filter(!is.na(adj_close)) %>%
+  group_by(ticker) %>%
+  summarise(first_date = min(Date), .groups = "drop") %>%
+  arrange(first_date)
+
+head(entry_dates, 10)
+summary(entry_dates$first_date)
+
+entry_dates_sum <- entry_dates %>%
+  count(year = lubridate::year(first_date)) %>%
+  arrange(desc(n))
+entry_dates_sum
+```
+
+## Plot: number of active stocks over time
+
+```{r}
+active_by_date <- Price_Long %>%
+  ungroup() %>%
+  filter(!is.na(adj_close)) %>%
+  group_by(Date) %>%
+  summarise(active_stocks = n_distinct(ticker), .groups = "drop")
+
+ggplot(active_by_date, aes(x = Date, y = active_stocks)) +
+  geom_line() +
+  labs(
+    title = "Number of Active Stocks Over Time",
+    y = "Active tickers",
+    x = "Date"
+  ) +
+  scale_x_date(labels = scales::label_date_short()) +
+  theme_minimal()
+```
+
+# Construct balanced panel (drop tickers that entered after start_date)
+
+```{r}
+todrop <- entry_dates %>%
+  filter(first_date > start_date) %>%
+  pull(ticker)
+
+SP500_Daily_Prices <- Price_Long %>%
+  filter(!ticker %in% todrop)
+
+n_distinct(SP500_Daily_Prices$ticker)
+```
+
+## Verify balance: counts per Date and range
+
+```{r}
+balance_check <- SP500_Daily_Prices %>%
+  ungroup() %>%
+  count(Date) %>%
+  summarise(
+    min = min(n),
+    max = max(n),
+    mean = mean(n)
+  )
+
+balance_check
+```
+
+# Engineering
+
+Task: Construct a dataframe of simple 1day returns. SP500-Daily-SimpleReturns
+
+```{r}
+SP500_Daily_SimpleReturns <- SP500_Daily_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  summarise(
+    Date = Date[-1],
+    OneDaySimpleRet = adj_close[-1] / adj_close[-length(adj_close)] - 1,
+    .groups = "drop"
+            )
+```
+
+Task: Construct a dataframe of log 1day returns. SP500-Daily-LogReturns
+
+```{r}
+SP500_Daily_LogReturns <- SP500_Daily_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  summarise(
+    Date = Date[-1],
+    OneDayLogRet = log(adj_close[-1]) - log(adj_close[-length(adj_close)]),
+    .groups = "drop"
+            )
+```
+
+# Save
+
+Task: Save SP500_Daily_Prices, SP500_Daily_SimpleReturns, and SP500_Daily_LogReturns to a single R workspace using "save"
+
+```{r}
+save(
+  SP500_Daily_Prices,
+  SP500_Daily_SimpleReturns,
+  SP500_Daily_LogReturns,
+  file = here("Data", "SP500_Daily_Data.RData")
+)
+```
+
+Task: Save the SP500_Daily_Prices, SP500_Daily_SimpleReturns, and SP500_Daily_LogReturns to individual csv files
+
+```{r}
+readr::write_csv(SP500_Daily_Prices,
+                 here("Data", "SP500_Daily_Prices.csv"))
+
+
+readr::write_csv(SP500_Daily_SimpleReturns,
+                 here("Data", "SP500_Daily_SimpleReturns.csv"))
+
+readr::write_csv(SP500_Daily_LogReturns,
+                 here("Data", "SP500_Daily_LogReturns.csv"))
+```
+
+## Verify saved
+
+Task: Clear the environment
+
+```{r}
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+```
+
+Task: Load the RData file
+
+```{r}
+load(here::here("Data", "SP500_Daily_Data.RData"))
+```
+
+Note: Too large for our GitHub repo, but you can run the code above to recreate it.
