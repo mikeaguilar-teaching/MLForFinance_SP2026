@@ -1,0 +1,412 @@
+---
+title: "Momentum Portfolio"
+subtitle: "Combining two strategies to form a portfolio"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+
+```
+
+# Data
+
+## Load monthly momentum
+
+```{r}
+Momentum <- read.csv(here("Data","SP500_Mthly_Momentum.csv"))
+```
+
+## Load monthly returns
+```{r}
+SP500_Mthly_Returns <- read.csv(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+
+
+## Set Test and Train Periods
+
+Task: Create a dataframe called Train.Momentum that captures momentum for all the constituents all all dates prior to the test date.  Also create an analogous df for returns. 
+
+```{r}
+
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train.Momentum.Constituents <- Momentum %>% 
+  filter(Date<=last_train_date) %>%
+  filter(!ticker == "SP500")
+
+Train.Returns.Constituents <- SP500_Mthly_Returns %>%
+  filter(Date<=last_train_date) %>%
+  filter(!ticker == "SP500")
+
+```
+
+
+# Signal Construction
+
+Task: Construct a simple momentum strategy
+
+-   Define LongCondition = 1 if $mom^{Train}_{i} >0$ and 0 otherwise
+
+-   Define ShortCondition = 1 if $mom^{Train}_{i} < 0$ and 0 otherwise
+
+-   $s_{i,t}$ = LongCondition minus ShortCondition
+
+Task: Create a vector that contains the momentum on the last observation of the training period
+
+```{r}
+Signal_Matrix <- Train.Momentum.Constituents %>% 
+  filter(Date == last_train_date) %>%
+  select(Date, ticker, momentum) %>% 
+  rename("signal_matrix" = "momentum")
+
+Signal_Matrix
+```
+
+
+# Daily Data for Evaluation
+
+Task: Load SP500 Daily Simple Returns
+
+```{r}
+
+SP500_Daily_SimpleReturns <- read.csv(here("Data","SP500_Daily_SimpleReturns.csv"))
+```
+
+
+Task: ensure Date is Date class
+
+```{r}
+SP500_Daily_SimpleReturns <- SP500_Daily_SimpleReturns %>%
+  mutate(Date = as.Date(Date))
+```
+
+Task: Filter test period (dates AFTER last_train)
+
+```{r}
+test_returns <- SP500_Daily_SimpleReturns %>%
+  filter(
+    Date > as.Date(last_train_date) &
+    Date <= as.Date(test_date)
+  ) 
+```
+
+# Raw Weights
+
+Task: Create a weights dataframe based upon the signal. Set the weight equal to the signal value.
+
+```{r}
+weight_df <- Signal_Matrix %>% 
+  transmute(
+    ticker,
+    Date,
+    weight = signal_matrix) 
+weight_df
+gross_scale <- sum(Signal_Matrix$signal_matrix)
+gross_scale
+
+fullyinvested_weights_df <- weight_df %>%
+  mutate(weight = Signal_Matrix$signal_matrix / gross_scale)
+
+
+sum(fullyinvested_weights_df$weight)
+
+```
+
+
+```{r}
+Port.Momentum <- construct_portfolio(
+    test_returns,
+    fullyinvested_weights_df,
+    # column names in inputs
+    date_col   = "Date",
+    ticker_col = "ticker",
+    return_col = "OneDaySimpleRet",
+    weight_col = "weight",
+    return_type = "simple", #c("simple","log"),
+    rebalance_freq = "monthly", #c("monthly","quarterly","yearly"),
+    shift_n = 1 # if shift_n=1 and rebalance_freq=monthly, then w_Jan * ret_Feb
+)
+```
+
+
+
+# Portfolio
+
+Let's combine two strategies to form a single portfolio, then back out the position weights.
+
+## Second Strategy: High SR
+
+Task: Compute the Sharpe Ratio for each stock in the training period.
+
+```{r}
+SR_Matrix <- Train.Returns.Constituents %>%
+  filter(!ticker == "SP500") %>%
+  group_by(ticker) %>%
+  summarize(
+    mean_return = mean(OneMthSimpleRet, na.rm = TRUE),
+    sd_return = sd(OneMthSimpleRet, na.rm = TRUE)
+  ) %>%
+  mutate(
+    sharpe_ratio = mean_return / sd_return
+  ) %>%
+  select(ticker, sharpe_ratio)
+```
+
+Task: Create a signal matrix based upon Sharpe Ratio
+
+```{r}
+SR_Signal_Matrix <- SR_Matrix %>%
+  mutate(
+    signal_matrix = ifelse(sharpe_ratio > 0, sharpe_ratio, 0),
+    Date = last_train_date
+  ) %>%
+  select(ticker, signal_matrix, Date)
+```
+
+Let's use these Sharpe Ratio values as the basis for weights for the second strategy. Let's also scale them so that fully invested.
+
+Task: Scale weights so that fully invested
+
+```{r}
+gross_scale <- sum(SR_Signal_Matrix$signal_matrix)
+Weights.SR <- SR_Signal_Matrix %>%
+  mutate(weight = SR_Signal_Matrix$signal_matrix / gross_scale) %>%
+  rename("ticker" = "ticker","weight" = "weight")
+sum(Weights.SR$weight)
+```
+
+Task: Construct the portfolio
+
+```{r}
+Port.SR <- construct_portfolio(
+    test_returns,
+    Weights.SR,
+    # column names in inputs
+    date_col   = "Date",
+    ticker_col = "ticker",
+    return_col = "OneDaySimpleRet",
+    weight_col = "weight",
+    return_type = "simple", #c("simple","log"),
+    rebalance_freq = "monthly", #c("monthly","quarterly","yearly"),
+    shift_n = 1 # if shift_n=1 and rebalance_freq=monthly, then w_Jan * ret_Feb
+)
+
+```
+
+## Combine Strategies
+
+Task: create a returns_matrix with momentum returns and SR returns
+
+```{r}
+temp1 <- Port.Momentum$portfolio %>% select(date, pnl)
+temp2 <- Port.SR$portfolio       %>% select(date, pnl)
+
+# join by date to ensure alignment
+returns_df <- temp1 %>%
+  left_join(temp2, by = "date", suffix = c("_Momentum", "_SR")) %>%
+  rename(Date = date,
+         Momentum_Return = pnl_Momentum,
+         SR_Return       = pnl_SR)
+
+# For QP use only numeric columns (no Date)
+returns_matrix <- as.matrix(returns_df %>% select(Momentum_Return, SR_Return))
+
+```
+
+Task: Combine the two fully invested strategies into a single portfolio that has min variance subject to target return of 0.01% per day (approx 2.5% per month) and weights summing to 1 and no asset having a weight greater 25%. For simplicity, let's use the daily returns from the test period to estimate the covariance matrix and mean returns, noting that this is NOT actionable.
+
+```{r}
+cov_matrix   <- cov(returns_matrix, use = "complete.obs")
+mean_returns <- colMeans(returns_matrix, na.rm = TRUE)
+n <- ncol(returns_matrix)
+
+# user-configurable targets
+target <- 0.0001   # target expected return floor (e.g., 0.01% per period)
+min_w  <- 0.25     # minimum weight on each asset
+
+# quick feasibility check: n * min_w must be <= 1 for any feasible sum-to-1 weights
+if (n * min_w > 1) stop(sprintf(
+  "Infeasible: n * min_w = %g * %g = %g > 1. Reduce min_w or number of assets.",
+  n, min_w, n * min_w
+))
+
+# Build QP matrices
+# objective: (1/2) w' (2*cov_matrix) w  -> Dmat = 2*cov
+eps <- 1e-10
+Dmat <- 2 * cov_matrix + eps * diag(n)   # tiny jitter on diagonal for PD
+dvec <- rep(0, n)
+
+# Constraints are A^T w >= b in quadprog.
+# We'll build A columns as:
+#   1) rep(1, n)        => sum(w) = 1           (equality)
+#   2) mean_returns     => mean_returns' w >= target
+#   3) diag(n)          => w_i >= min_w  for each i
+Amat <- cbind(
+  rep(1, n),
+  mean_returns,
+  diag(n)
+)
+
+bvec <- c(
+  1,                 # sum(w) = 1
+  target,            # mean_returns' w >= target
+  rep(min_w, n)      # w_i >= min_w
+)
+
+meq <- 1  # only the first constraint (sum = 1) is equality
+
+# Solve with tryCatch so we present a clear error if infeasible
+qp_result <- tryCatch({
+  solve.QP(Dmat, dvec, Amat, bvec, meq)
+}, error = function(e) {
+  stop("solve.QP failed: ", e$message)
+})
+
+optimal_weights <- qp_result$solution
+names(optimal_weights) <- colnames(returns_matrix)
+
+# Diagnostics
+cat("Optimal weights:\n")
+print(optimal_weights)
+
+cat("\nSanity checks:\n")
+cat(" sum(weights)          = ", sum(optimal_weights), "\n")
+cat(" min(weight)           = ", min(optimal_weights), "\n")
+cat(" mean_returns' * w     = ", sum(mean_returns * optimal_weights), "\n")
+# portfolio variance and sd:
+port_var  <- as.numeric(t(optimal_weights) %*% cov_matrix %*% optimal_weights)
+port_sd   <- sqrt(port_var)
+cat(" portfolio variance    = ", port_var, "\n")
+cat(" portfolio sd (perpd)  = ", port_sd, "\n")
+
+
+```
+
+Task: Prepare per-ticker weights for each strategy
+
+```{r}
+mom_w <- fullyinvested_weights_df %>%
+  transmute(
+    ticker,
+    weight_mom = weight,
+    weight_date = as.Date(Date)
+  )
+
+sr_w <- Weights.SR %>%
+  transmute(
+    ticker,
+    weight_sr = weight,
+    weight_date = as.Date(Date)
+  )
+```
+
+Task: Join per-ticker weights: missing weight =\> 0
+
+```{r}
+ticker_weights <- full_join(mom_w, sr_w, by = "ticker") %>%
+  mutate(
+    weight_mom = coalesce(weight_mom, 0),
+    weight_sr  = coalesce(weight_sr,  0),
+    # pick the canonical weight_date (they should be equal; else keep mom's or SR's)
+    weight_date = coalesce(weight_date.x, weight_date.y)
+  ) %>%
+  select(ticker, weight_mom, weight_sr, weight_date)
+```
+
+Task: Multiply by strategy allocations from QP
+
+```{r}
+w_mom_alloc <- as.numeric(optimal_weights["Momentum_Return"])  # or change name as needed
+w_sr_alloc  <- as.numeric(optimal_weights["SR_Return"])
+
+ticker_weights <- ticker_weights %>%
+  mutate(
+    combined_weight = weight_mom * w_mom_alloc + weight_sr * w_sr_alloc
+  )
+
+```
+
+Task: Choose the weight formation date to use (this should match how you prepared the per-ticker weight_date)
+
+```{r}
+formation_date <- unique(ticker_weights$weight_date)  # should be last_train_date (e.g., "2025-08-31")
+```
+
+Task: Which return dates will the portfolio be evaluated on?
+
+```{r}
+test_dates <- test_returns %>% distinct(Date) %>% arrange(Date) %>% pull(Date)
+```
+
+Task: Build weight_df with one row per ticker and one formation date (or if you prefer per-day weights you can expand on purpose) Since construct_portfolio_single buckets weights by rebalance_period and shift_n, we only need to provide the formation_date for the weights (one row per ticker).
+
+```{r}
+weight_df <- ticker_weights %>%
+  transmute(Date = as.Date(formation_date), ticker, weight = combined_weight)
+```
+
+Task: Construct the combined portfolio
+
+```{r}
+Port.Combined <- construct_portfolio(
+  return_df = test_returns,
+  weight_df = weight_df,
+  date_col   = "Date",
+  ticker_col = "ticker",
+  return_col = "OneDaySimpleRet",
+  weight_col = "weight",
+  return_type = "simple",
+  rebalance_freq = "monthly",
+  shift_n = 1
+)
+
+# Inspect
+Port.Combined$portfolio
+Port.Combined$holdings
+
+```
+
+Task: Create a boxplot of the ticker_weights for each asset. Use plotly style tooltips to show ticker and weight and include jitter points.
+
+```{r}
+# Prepare data
+weight_plot_df <- ticker_weights %>%
+  select(ticker, combined_weight) %>%
+  arrange(desc(combined_weight))
+
+p <- ggplot(weight_plot_df, aes(x = "All Tickers", y = combined_weight,
+                                text = paste("Ticker:", ticker,
+                                             "<br>Weight:", round(combined_weight, 4)))) +
+  geom_boxplot(fill = "lightgray", outlier.shape = NA) +
+  geom_jitter(width = 0.2, color = "steelblue", size = 2, alpha = 0.7) +
+  labs(title = "Distribution of Combined Portfolio Weights",
+       x = "",
+       y = "Weight") +
+  theme_minimal()
+
+interactive_plot <- ggplotly(p, tooltip = "text")
+
+interactive_plot
+
+
+```

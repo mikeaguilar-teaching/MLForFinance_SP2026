@@ -1,0 +1,194 @@
+---
+title: "Momentum Signal"
+subtitle: "Constructing and evaluating a simple momentum strategy"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+source(here("Supporting", "SignalTestingStatic.R"))
+
+```
+
+# Data
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns from GitHub.
+
+```{r}
+download.file(
+  "https://raw.githubusercontent.com/mikeaguilar-teaching/MLForFinance/main/Data/SP500_Mthly_SimpleReturns.csv",
+  "SP500_Mthly_SimpleReturns.csv",
+  mode = "wb"
+)
+Returns <- read.csv("SP500_Mthly_SimpleReturns.csv")
+```
+
+## Load monthly momentum from GitHub
+
+```{r}
+download.file(
+  "https://raw.githubusercontent.com/mikeaguilar-teaching/MLForFinance/main/Data/SP500_Mthly_Momentum.csv",
+  "SP500_Mthly_Momentum.csv",
+  mode = "wb"
+)
+Momentum <- read.csv("SP500_Mthly_Momentum.csv")
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(Momentum, by = c("Date", "ticker"))
+
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.
+
+```{r}
+
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date == test_date)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes. Repeat for momentum.
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+
+```
+
+# Signal Construction
+
+Task: Construct a simple momentum strategy
+
+-   Define LongCondition = 1 if $mom^{Train}_{i} >0$ and 0 otherwise
+
+-   Define ShortCondition = 1 if $mom^{Train}_{i} < 0$ and 0 otherwise
+
+-   $s_{i,t}$ = LongCondition minus ShortCondition
+
+Task: Create a vector that contains the momentum on the last observation of the training period
+
+```{r}
+
+Signal_Matrix <- Train.Momentum.Constituents %>% 
+  filter(Date == last_train_date) %>%
+  select(ticker, momentum) %>% 
+  rename("signal_matrix" = "momentum")
+
+Signal_Matrix
+```
+
+Task: Create a vector that takes +1,0,-1 based upon long, neutral, short positioning. Long of signal \> tau. Short if signal less than -tau. Neutral otherwise.
+
+```{r}
+
+tau <- 0
+
+Signal_Position <- Signal_Matrix %>%
+  transmute(
+    ticker,
+    signal = case_when(
+      signal_matrix >  tau  ~  1L,
+      signal_matrix < -tau  ~ -1L,
+      TRUE             ~  0L
+    )
+  ) %>%
+  rename("signal_position" = "signal")
+
+Signal_Position
+
+```
+
+# Evaluate
+
+Task: Format Test period returns to conform to the Signal Testing function
+
+```{r}
+returns <- Test.Returns.Constituents %>%
+  select(ticker,OneMthSimpleRet) %>%
+  rename(returns = OneMthSimpleRet)
+```
+
+Task: Create meta labels
+
+```{r}
+ Meta <- list(
+   assetname = "momentum signal",
+   benchmarkname = "SP500",
+   signalname = "Momentum"
+ )
+```
+
+Task: Implement the SignalTestingStatic function
+
+```{r}
+res <- SignalTestingStatic(
+   signal_position = Signal_Position,
+   signal_matrix = Signal_Matrix,
+   returns = returns,
+   Meta = Meta,
+   signal_threshold = tau,          # acted iff |signal_matrix| > tau
+   return_threshold = 0,            # for outcome_mode="direction" it doesn't matter
+   outcome_mode = "direction",
+   return_type = "simple",
+   one_sided_hit = FALSE,
+   seed = 123,
+   output_dir = "./Output/SP500_Mthly_Momentum_Signal_Static"
+)
+res
+```

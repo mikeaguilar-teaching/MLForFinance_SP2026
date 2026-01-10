@@ -1,0 +1,174 @@
+---
+title: "Momentum Strategy"
+subtitle: "Constructing and evaluating a dynamic momentum strategy"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+# Data
+
+## Load Daily Simple Returns
+
+Task: Load SP500 Daily Simple Returns
+
+```{r}
+SP500_Daily_SimpleReturns<-read.csv(here("Data","SP500_Daily_SimpleReturns.csv"))
+```
+
+## Load monthly momentum
+
+```{r}
+
+Momentum <- read.csv(here("Data","SP500_Mthly_Momentum.csv"))
+
+```
+
+## Set Test and Train Periods
+
+Task: Set first Test period date as the end of Sep2025 and the last Test period date as the end of Nov2025. Be sure to format as.Date
+
+```{r}
+first_test_date <- as.Date("2025-09-30")
+last_test_date  <- as.Date("2025-11-30")
+```
+
+Task: Create a sequence of test dates from first to last test date, by month. Then adjust to the last day of each month using ceiling_date - days(1)
+
+```{r}
+test_dates <- seq(from = first_test_date, to = last_test_date, by = "month")
+
+test_dates <- ceiling_date(test_dates, "month") - days(1)
+
+print(test_dates)
+```
+
+Task: Count the number of "rolls" we will do for the dynamic strategy
+
+```{r}
+NumberRoll <- length(test_dates)
+NumberRoll
+```
+
+Task: Create a sequence of dates marking the end of each training period, which is the last day of the month prior to each test date
+
+```{r}
+train_end_dates <- floor_date(as.Date(test_dates), "month") - days(1)
+print(train_end_dates)
+```
+
+# Construct weights
+
+Task: Compute weights for each roll based on momentum at the end of each training period
+
+```{r}
+
+weights_list <- NULL
+
+for (i in 1:NumberRoll) {
+  train_end_date_i <- train_end_dates[i]
+  test_date_i      <- test_dates[i]
+
+  print(train_end_date_i)
+  print(test_date_i)
+
+  momentum_snapshot <- Momentum %>%
+    mutate(Date = as.Date(Date)) %>%
+    filter(Date == train_end_date_i) %>%
+    arrange(Date)
+  
+  fullyinvested_weights_df <- Momentum %>%
+    mutate(Date = as.Date(Date)) %>%
+    filter(Date == train_end_date_i) %>%
+    # keep only required columns
+    select(Date, ticker, momentum) %>%
+    # clean up NA values in momentum
+    mutate(momentum = replace_na(momentum, 0)) %>%
+    # compute the gross scale (sum of momentum)
+    mutate(gross_scale = sum(momentum)) %>%
+    # safely normalize to sum to 1; if gross_scale == 0, assign 0 weights
+    mutate(weight = ifelse(gross_scale != 0, momentum / gross_scale, 0)) %>%
+    select(Date, ticker, weight)
+  
+  weights_list[[i]] <- fullyinvested_weights_df
+}
+
+```
+
+Task: Combine weights list into a single dataframe
+
+```{r}
+  weights_df <- weights_list %>%
+  keep(~ !is.null(.x) && nrow(.x)>0) %>%
+  bind_rows(.id = "roll_id") %>%
+  mutate(roll_id = as.integer(roll_id))
+```
+
+Task: Verify the weights sum to 1 in each roll
+
+```{r}
+  weights_df %>%
+    group_by(roll_id) %>%
+    summarise(total_weight = sum(weight))
+```
+
+# Gather test period returns
+
+Task: Filter test period (dates AFTER last_train)
+
+```{r}
+  test_returns <- SP500_Daily_SimpleReturns %>%
+    filter(Date > train_end_dates[1] & Date <= last_test_date)
+```
+
+# Construct Portfolio
+
+Task: Construct the portfolio by calling out to construct_portfolio
+
+```{r}
+  Port <- construct_portfolio(
+    test_returns,
+    weights_df,
+    # column names in inputs
+    date_col   = "Date",
+    ticker_col = "ticker",
+    return_col = "OneDaySimpleRet",
+    weight_col = "weight",
+    return_type = "simple", #c("simple","log"),
+    rebalance_freq = "monthly", #c("monthly","quarterly","yearly"),
+    shift_n = 1 # if shift_n=1 and rebalance_freq=monthly, then w_Jan * ret_Feb
+)
+  
+```
+
+Task: Plot port index over time
+
+```{r}
+Port$portfolio %>%
+  ggplot(aes(x = date, y = port_index)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Dynamic Monthly Momentum Strategy Portfolio Index",
+    x = "",
+    y = "Portfolio Index"
+  ) +
+  theme_minimal()
+```
