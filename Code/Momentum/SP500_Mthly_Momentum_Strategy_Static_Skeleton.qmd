@@ -1,0 +1,236 @@
+---
+title: "Momentum Strategy"
+subtitle: "Constructing and evaluating a momentum strategy"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+?
+
+```
+
+# Data
+
+## Load monthly momentum from GitHub
+
+```{r}
+Momentum <- ?(here("Data","SP500_Mthly_Momentum.csv"))
+```
+
+## Set Test and Train Periods
+
+Task: Create test_date as 9/30/2025 and compute the last train date as one month prior
+
+```{r}
+test_date <- ?("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+```
+
+Task: Create Train.Momentum.Constituents which contains all the dates in the traning period only for the SP500 constituents
+
+```{r}
+Train.Momentum.Constituents <- ? %>%
+  filter(Date <= last_train_date) %>%
+  filter(!ticker == "SP500")
+```
+
+# Signal Construction
+
+Task: Construct a simple momentum strategy
+
+-   Define LongCondition = 1 if $mom^{Train}_{i} >0$ and 0 otherwise
+
+-   Define ShortCondition = 1 if $mom^{Train}_{i} < 0$ and 0 otherwise
+
+-   $s_{i,t}$ = LongCondition minus ShortCondition
+
+Task: Create a vector that contains the momentum on the last observation of the training period
+
+```{r}
+
+Signal_Matrix <- ? %>% 
+  filter(Date == last_train_date) %>%
+  select(Date, ticker, momentum) %>% 
+  rename("signal_matrix" = "momentum")
+
+Signal_Matrix
+```
+
+# Daily Data for Evaluation
+
+Task: Load SP500 Daily Simple Returns
+
+```{r}
+SP500_Daily_SimpleReturns<-read.csv(here("?","SP500_Daily_SimpleReturns.csv"))
+```
+
+Task: ensure Date is Date class
+
+```{r}
+SP500_Daily_SimpleReturns <- SP500_Daily_SimpleReturns %>%
+  ?(Date = as.Date(Date))
+```
+
+Task: Filter test period (dates AFTER last_train)
+
+```{r}
+test_returns <- SP500_Daily_SimpleReturns %>%
+  filter(
+    Date ? as.Date(last_train_date) &
+    Date ? as.Date(test_date)
+  ) 
+```
+
+# Raw Weights
+
+Task: Create a weights dataframe based upon the signal. Set the weight equal to the signal value.
+
+```{r}
+weight_df <- Signal_Matrix %>% 
+  transmute(
+    ticker,
+    Date,
+    weight = ?) 
+weight_df
+
+```
+
+Task: Construct the portfolio
+
+```{r}
+Port.Raw <- ?(
+    test_returns,
+    weight_df,
+    # column names in inputs
+    date_col   = "Date",
+    ticker_col = "ticker",
+    return_col = "OneDaySimpleRet",
+    weight_col = "weight",
+    return_type = "simple", #c("simple","log"),
+    rebalance_freq = "monthly", #c("monthly","quarterly","yearly"),
+    shift_n = 1 # if shift_n=1 and rebalance_freq=monthly, then w_Jan * ret_Feb
+)
+
+```
+
+Task: Plot the port_index over time
+
+```{r}
+Port.Raw$portfolio %>%
+  ggplot(aes(x = date, ? = port_index)) +
+  geom_line(color = "blue") +
+  labs(title = "Portfolio Index Over Time",
+       x = "",
+       y = "Portfolio Index") +
+  theme_minimal()
+```
+
+Task: Display the portfolio holdings
+
+```{r}
+Port.Raw$holdings
+```
+
+Task: Display the portfolio time series
+
+```{r}
+Port.Raw$portfolio
+```
+
+Q: What does gross exposure mean?
+
+A:
+
+
+Q: Why doesn't gross exposure change throughout the sample?
+
+
+
+Q: Why isn't gross exposure = 100?
+
+A:
+
+
+# Fully Invested Weights
+
+Task: Create a weight dataframe. Set the
+
+```{r}
+gross_scale <- sum(Signal_Matrix$signal_matrix)
+gross_scale
+
+fullyinvested_weights_df <- weight_df %>%
+  mutate(weight = Signal_Matrix$signal_matrix / ?)
+
+
+sum(fullyinvested_weights_df$weight)
+
+```
+
+Task: Construct the portfolio
+
+```{r}
+Port.FullyInvested <- ?(
+    test_returns,
+    fullyinvested_weights_df,
+    # column names in inputs
+    date_col   = "Date",
+    ticker_col = "ticker",
+    return_col = "OneDaySimpleRet",
+    weight_col = "weight",
+    return_type = "simple", #c("simple","log"),
+    rebalance_freq = "monthly", #c("monthly","quarterly","yearly"),
+    shift_n = 1 # if shift_n=1 and rebalance_freq=monthly, then w_Jan * ret_Feb
+)
+
+```
+
+Task: Plot the port_index over time
+
+```{r}
+Port.FullyInvested$portfolio %>%
+  ggplot(aes(? = date, y = port_index)) +
+  geom_line(color = "blue") +
+  labs(title = "Portfolio Index Over Time",
+       x = "",
+       y = "Portfolio Index") +
+  theme_minimal()
+```
+
+Task: Create a plot that overlays the two portfolio indices
+
+```{r}
+combined_portfolio <- Port.Raw$portfolio %>%
+  select(date, raw_port_index = port_index) %>%
+  inner_join(
+    Port.FullyInvested$portfolio %>%
+      select(date, fully_invested_port_index = port_index),
+    by = "date"
+  )
+combined_portfolio %>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = raw_port_index, color = "Raw Weights")) +
+  geom_line(aes(y = fully_invested_port_index, color = "Fully Invested Weights")) +
+  labs(title = "Portfolio Index Comparison",
+       x = "",
+       y = "Portfolio Index") +
+  scale_color_manual(values = c("Raw Weights" = "blue", "Fully Invested Weights" = "red")) +
+  theme_minimal()
+```
