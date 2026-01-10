@@ -1,0 +1,109 @@
+---
+title: "Daily Performance Stats"
+subtitle: "Quick demo of the daily performance statistics function"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "?"))
+
+```
+
+# Data
+
+Task: set seed 124 for simulations
+
+```{r}
+ set.seed?
+```
+
+Task: Create a dataframe called price with Date, Asset, and Benchmark columns. Dates should be daily starting from 2008-01-01 for 5yrs of daily trading activity. Asset and Benchmark should be cumulative products of random normal returns.
+
+```{r}
+ n <- 250*?
+ Price <- data.frame(
+   Date      = seq.Date(from = as.Date("2008-01-01"), by = "day", length.out = n),
+   Asset     = ?(1 + rnorm(n, 0.0005, 0.02)),
+   Benchmark = ?(1 + rnorm(n, 0.0003, 0.015))
+ )
+ 
+```
+
+# Peformance Stats
+
+Task: Set meta data
+
+```{r}
+ Meta <- list(asset_name = "MyPortfolio", benchmark_name = "Bencmark")
+```
+
+Task: Call DailyPerformanceStats function with Price, Meta, rf_annual = 0, and output_dir set to "../Output/DailyPerformanceStat"
+
+```{r}
+ results <- DailyPerformanceStats(?, Meta, rf_annual = 0, output_dir ="./Output/DailyPerformanceStat")
+```
+
+Task: Display sample_stats_tbl
+
+```{r}
+?$sample_stats_tbl
+```
+
+Q: Interpret the results.
+
+A:
+
+
+
+
+Task: Display the risk_return_tbl
+
+```{r}
+results$?
+```
+
+Q: Interpret the results.
+
+A:
+
+
+
+
+Task: Display the drawdowns_tbl
+
+```{r}
+results$?
+```
+
+Q: Interpret the results. Opening the MyPortfolio_underwater.png might be helpful.
+
+A:
+
+
+
+
+Task: Display all of the plots
+
+```{r}
+?
+
+```
