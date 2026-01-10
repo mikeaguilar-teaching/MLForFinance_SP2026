@@ -1,0 +1,304 @@
+---
+title: "SP500 Momentum EDA"
+subtitle: "Exploring the momentum of SP500 returns"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+In one of the primary examples for this course we will be working with data on the SP500.
+
+Our empirical goal here is to conduct Exploratory Descriptive Analysis (EDA) for the momentum of returns, which we define as returns from month t-12 through t-2 (i.e. 12-2).
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(?("Supporting", "PackageLoads.R"))
+```
+
+# Data Acquisition
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- ?(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+## Load momentum 
+
+```{r}
+Momentum <- read.csv(here("?","SP500_Mthly_Momentum.csv"))
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(Momentum, by = ?)
+
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.
+
+```{r}
+
+test_date <- as.Date("2025-09-30")  
+
+Train <- merged_df %>% filter(Date ? test_date)
+Train.Returns  <- Train %>% ?(!momentum)
+Train.Momentum <- Train %>% select(!?)
+
+Test <- ? %>% filter(Date == ?)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+# Historic Momentum
+
+Task: Compute average momentum for each asset
+
+```{r}
+Avg_Momentum_ByAsset <- Train.Momentum %>%
+  filter(Date <= test_date) %>%   
+  mutate(momentum = as.numeric(momentum)) %>%
+  group_by(ticker) %>%
+  summarise(avg_momentum = ?(?, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(avg_momentum))
+
+Avg_Momentum_ByAsset
+```
+
+Task: Construct a histogram of average momentum, overlayed with a Gaussian curve
+
+```{r}
+x <- Avg_Momentum_ByAsset$?
+
+mu <- mean(x)
+sig <- sd(x)
+
+df <- data.frame(ret_1m = x)
+
+ggplot(df, aes(x = ret_1m)) +
+  # Histogram as density
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 50, fill = "white", color = "steelblue") +
+  # Shade the fitted Gaussian density
+  stat_function(fun = dnorm,
+                args = list(mean = mu, sd = sig),
+                geom = "area",
+                fill = "steelblue",
+                alpha = 0.20) +
+  # Gaussian outline on top
+  stat_function(fun = dnorm,
+                args = list(mean = mu, sd = sig),
+                linewidth = 1,
+                color = "steelblue") +
+  labs(x = "average momentum", y = "Density")
+```
+
+Task: Create a table of sample stats including: mean,sigma, skew, kurtosis, min, q.1, q.25, q.5, q.75, q.9, max
+
+```{r}
+mom_stats <- tibble(
+  mean  = mean(x, na.rm = TRUE),
+  sigma = ?(x, na.rm = TRUE),
+  skew  = moments::skewness(x, na.rm = TRUE),
+  kurt  = moments::kurtosis(x, na.rm = TRUE),
+  min   = min(x, na.rm = TRUE),
+  q_01  = unname(quantile(x, 0.01, na.rm = TRUE)),
+  q_10  = unname(quantile(x, 0.10, na.rm = TRUE)),
+  q_25  = unname(quantile(x, 0.25, na.rm = TRUE)),
+  q_50  = unname(quantile(x, 0.50, na.rm = TRUE)),
+  q_75  = unname(quantile(x, 0.75, na.rm = TRUE)),
+  q_90  = unname(quantile(x, 0.90, na.rm = TRUE)),
+  max   = max(x, na.rm = TRUE)
+)
+mom_stats
+```
+
+# Recent Momentum
+
+Task: Isolate the most recent momentum value for each asset
+
+```{r}
+
+Avg_Momentum_Recent_ByAsset <- Train.Momentum %>%
+  mutate(
+    Date = as.Date(Date),
+    momentum = as.numeric(momentum)
+  ) %>%
+  group_by(ticker) %>%
+  ?(order_by = Date, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(recent_momentum = momentum) %>%
+  arrange(desc(recent_momentum))
+
+
+Avg_Momentum_Recent_ByAsset
+```
+
+Task: Construct a histogram of average momentum, overlayed with a Gaussian curve
+
+```{r}
+x <- Avg_Momentum_Recent_ByAsset?
+
+mu <- mean(x)
+sig <- sd(x)
+
+df <- data.frame(ret_1m = x)
+
+ggplot(df, aes(x = ret_1m)) +
+  # Histogram as density
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 50, fill = "white", color = "steelblue") +
+  # Shade the fitted Gaussian density
+  stat_function(fun = dnorm,
+                args = list(mean = mu, sd = sig),
+                geom = "area",
+                fill = "steelblue",
+                alpha = 0.20) +
+  # Gaussian outline on top
+  stat_function(fun = dnorm,
+                args = list(mean = mu, sd = sig),
+                linewidth = 1,
+                color = "steelblue") +
+  labs(x = "recent momentum", y = "Density")
+```
+
+Task: Create a table of sample stats including: mean,sigma, skew, kurtosis, min, q.1, q.25, q.5, q.75, q.9, max
+
+```{r}
+mom_stats_recent <- tibble(
+  mean  = mean(x, na.rm = TRUE),
+  sigma = sd(x, na.rm = TRUE),
+  skew  = moments::skewness(x, na.rm = TRUE),
+  kurt  = moments::kurtosis(x, na.rm = TRUE),
+  min   = min(x, na.rm = TRUE),
+  q_01  = unname(quantile(x, 0.01, na.rm = TRUE)),
+  q_10  = unname(quantile(x, 0.10, na.rm = TRUE)),
+  q_25  = unname(quantile(x, 0.25, na.rm = TRUE)),
+  q_50  = unname(quantile(x, 0.50, na.rm = TRUE)),
+  q_75  = unname(quantile(x, 0.75, na.rm = TRUE)),
+  q_90  = unname(quantile(x, 0.90, na.rm = TRUE)),
+  max   = max(x, na.rm = TRUE)
+)
+mom_stats_recent %>%
+  tidyr::?(
+    cols = everything(),
+    names_to = "stat",
+    values_to = "value"
+  ) %>%
+  dplyr::mutate(value = round(value, 3))
+
+```
+
+# Connecting Momentum to Test Period returns
+
+Task: Extract the last observation from train and the first from test
+
+```{r}
+last_train_date <- Train.Momentum %>% ?(d = max(Date)) %>% pull(d)
+first_test_date <- Test.Returns  %>% summarize(d =?(Date)) %>% pull(d)
+
+cat("Using momentum from Train last date:", last_train_date, "\n")
+cat("Using returns from Test first date:", first_test_date, "\n")
+```
+
+Task: Create a signal object based on momentum
+
+```{r}
+signal <- Train.Momentum %>%
+  filter(Date == last_train_date) %>%
+  ?(ticker, momentum)
+```
+
+Task: Create a returns object within the test period
+
+```{r}
+returns <- Test.Returns %>%
+  ?(Date == first_test_date) %>%
+  select(ticker, fwd_ret = OneMthSimpleRet)
+```
+
+Task: Join and form deciles (cross-section)
+
+```{r}
+nov_cs <- signal %>%
+  inner_join(returns, ? = "ticker") %>%   # keep only tickers present in both months
+  filter(!is.na(momentum) & !is.na(fwd_ret)) %>%
+  mutate(decile = ntile(momentum, 10))
+```
+
+Task: Create a summary by decile
+
+```{r}
+decile_summary <- nov_cs %>%
+  ?(decile) %>%
+  summarize(
+    n = n(),
+    mean_ret = mean(fwd_ret, na.rm = TRUE),
+    sd_ret = sd(fwd_ret, na.rm = TRUE),
+    se_ret = sd_ret / sqrt(n)
+  ) %>%
+  arrange(decile)
+
+print(decile_summary)
+```
+
+Task: Compute Top-minus-bottom and t-test
+
+```{r}
+# ensure decile 1 and 10 exist
+if (!all(c(1,10) %in% decile_summary$decile)) {
+  stop("Deciles 1 and/or 10 are not present. Inspect cross-section size.")
+}
+
+spread_mean <- decile_summary$mean_ret[decile_summary$decile == 10] ?
+               decile_summary$mean_ret[decile_summary$decile == 1]
+
+top_bottom <- nov_cs %>%
+  filter(decile %in% c(1, 10)) %>%
+  mutate(group = ifelse(decile == 10, "top", "bottom"))
+
+t_res <- t.test(fwd_ret ~ group, data = top_bottom, var.equal = FALSE)
+
+cat("\nTop - Bottom mean spread (decile10 - decile1):", round(spread_mean, 6), "\n")
+print(t_res)
+```
+
+Task: Plot mean return by decile with SE error bars
+
+```{r}
+ggplot(decile_summary, aes(x = factor(decile), y = ?)) +
+  geom_col(width = 0.7) +
+  geom_errorbar(aes(ymin = mean_ret - se_ret, ymax = mean_ret + se_ret), width = 0.2) +
+  labs(x = paste0("Momentum decile (signal: ", last_train_date, ")"),
+       y = paste0("Mean return (outcome: ", first_test_date, ")"),
+       title = paste("Cross-sectional", first_test_date, "returns by", last_train_date, "momentum decile")) +
+  theme_minimal()
+```
+
+# Reseting Test and Train
+
+Q: As an exercise, go back to the "Set Test and Train Periods". Redefine the Test period to by Nov2025 and the Train to be everything prior. What do you notice? Does your finding invalidate this trading signal?

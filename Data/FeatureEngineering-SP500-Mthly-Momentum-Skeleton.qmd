@@ -1,0 +1,504 @@
+---
+title: "SP500 Momentum Features"
+subtitle: "Constructing and exploring a few features for a momentum trading signal"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+In one of the primary examples for this course we will be working with data on the SP500.
+
+Our empirical goal here is to develop several features, including 12mth-2mth momentum, to use within various ML models that will inform a trading signal. See Jegadeesh and Titman (1993), Ken French Data Library, Calluzzo, Moneta, Topagolu (2025) and others.
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("?", "PackageLoads.R"))
+```
+
+# Data Acquisition
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- ?(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+# Construct Momentum
+
+Task: Compute 12-2 momentum for every monthly observation
+
+```{r}
+SP500_Mthly_Momentum <- ? %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    momentum =
+      (1 + lag(OneMthSimpleRet,  2)) *
+      (1 + lag(OneMthSimpleRet,  3)) *
+      (1 + lag(OneMthSimpleRet,  4)) *
+      (1 + lag(OneMthSimpleRet,  5)) *
+      (1 + lag(OneMthSimpleRet,  6)) *
+      (1 + lag(OneMthSimpleRet,  7)) *
+      (1 + lag(OneMthSimpleRet,  8)) *
+      (1 + lag(OneMthSimpleRet,  9)) *
+      (1 + lag(OneMthSimpleRet, 10)) *
+      (1 + lag(OneMthSimpleRet, 11)) *
+      (1 + lag(OneMthSimpleRet, 12)) ?
+  ) %>%
+  ungroup()
+
+```
+
+Task: Create a Test dataframe equal to 30Sep2025. Create a Train dataframe equal to all of the dates prior to the Test
+
+```{r}
+Train  <- SP500_Mthly_Momentum %>% ?(Date <= as.Date("2025-09-30"))
+Test <- SP500_Mthly_Momentum %>% filter(month(Date) == 10 & year(Date) == 2025)
+
+```
+
+## Scale Momentum
+
+Throughout, we'll construct features using the Train period.
+
+Task: For each asset, construct the z score of the most recent momentum observation scaled by that asset's historic mean and stdev of momentum witin the Training period. Call this Momentum-zTimeSeries.
+
+```{r}
+Momentum_zTimeSeries <- Train %>%
+  mutate(Date = as.Date(Date), momentum = as.numeric(momentum)) %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(is_recent = (Date == max(Date, na.rm = TRUE))) %>%
+  summarise(
+    recent_date = max(Date, na.rm = TRUE),
+    mom_recent  = momentum[which.max(Date)],
+    mom_mean_ts    = mean(momentum[!is_recent], na.rm = TRUE),
+    mom_sd_ts      = sd(momentum[!is_recent], na.rm = TRUE),
+    mom_z_ts            = ?,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(ticker))
+
+Momentum_zTimeSeries
+
+```
+
+Task: For each asset, construct the z score of the most recent momentum observations scaled by the mean and stdev of all the assets' most recent momentum. Call this Momentum-zCrossSection.
+
+```{r}
+Momentum_zCrossSection <- Train %>%
+  mutate(Date = as.Date(Date), momentum = as.numeric(momentum)) %>%
+  filter(is.finite(momentum)) %>%
+  mutate(recent_date = max(Date, na.rm = TRUE), mom_recent = momentum) %>%   # global most recent date
+  filter(Date == recent_date) %>%                     # keep that cross-section
+  mutate(
+    mom_mean_cs = mean(momentum, na.rm = TRUE),
+    mom_sd_cs   = ?(momentum, na.rm = TRUE),
+    mom_z_cs    = ifelse(mom_sd_cs > 0, (momentum - mom_mean_cs) / mom_sd_cs, NA_real_)
+  ) %>%
+  select(ticker, recent_date, mom_recent, mom_mean_cs, mom_sd_cs, mom_z_cs) %>% 
+  arrange(desc(ticker))
+
+Momentum_zCrossSection
+```
+
+# Other Features
+
+In the following section, we'll focus on the Training period.
+
+## Volatility
+
+Task: Compute the standard deviation of returns rolling over a 24mth period throughout the entire Training period
+
+```{r}
+Train_RollSD_24m <- Train %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  ?(
+    ret_1m = as.numeric(OneMthSimpleRet),
+    sd_24m = slide_dbl(
+      OneMthSimpleRet,
+      ~ sd(.x, na.rm = FALSE),   # require no missing inside the window
+      .before = 23,              # current month + prior 23 = 24 months
+      .complete = TRUE
+    )
+  ) %>%
+  ungroup()
+
+Train_RollSD_24m
+```
+
+Task: Compute the time series z score. Call this Volatility-zTimeseries
+
+```{r}
+Volatility_zTimeseries <- Train_RollSD_24m %>%
+  mutate(
+    Date  = as.Date(Date),
+    sd_24m = as.numeric(sd_24m)
+  ) %>%
+  filter(is.finite(sd_24m)) %>%        # keep only months with a full 24m window
+  group_by(ticker) %>%
+  mutate(
+    vol_mean_ts = ?(sd_24m, na.rm = TRUE),
+    vol_sd_ts   = sd(sd_24m, na.rm = TRUE),
+    vol_z_ts    = ifelse(vol_sd_ts > 0, (sd_24m - vol_mean_ts) / vol_sd_ts, NA_real_)
+  ) %>%
+  ungroup() %>%
+  arrange(ticker, Date)
+
+Volatility_zTimeseries
+
+```
+
+Task: Compute the cross sectional z score. Call this Volatility-zCrossSection
+
+```{r}
+Volatility_zCrossSection <- Train_RollSD_24m %>%
+  mutate(Date = as.Date(Date), sd_24m = as.numeric(sd_24m)) %>%
+  filter(is.finite(sd_24m)) %>%         
+  group_by(Date) %>%
+  mutate(
+    ? = mean(sd_24m, na.rm = TRUE),
+    vol_sd_cs   = sd(sd_24m, na.rm = TRUE),
+    vol_z_cs = ifelse(vol_sd_cs > 0, (sd_24m - vol_mean_cs) / vol_sd_cs, NA_real_)
+  ) %>%
+  ungroup() %>%
+  arrange(Date, ticker)
+
+Volatility_zCrossSection
+
+```
+
+## Skewness
+
+Task: Compute the skewness of returns rolling over a 24mth period throughout the entire Training period
+
+```{r}
+Train_RollSkew_24m <- Train %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    ret_1m = as.numeric(OneMthSimpleRet),
+    skew_24m = slide_dbl(
+      ret_1m,
+      ~ moments::?(.x, na.rm = FALSE),
+      .before = 23,        # current + prior 23 = 24 months
+      .complete = TRUE
+    )
+  ) %>%
+  ungroup()
+
+Train_RollSkew_24m
+```
+
+Task: Compute the time series z score. Call this Skew-zTimeseries
+
+```{r}
+Skew_zTimeseries <- Train_RollSkew_24m %>%
+  mutate(Date = as.Date(Date), skew_24m = as.numeric(skew_24m)) %>%
+  filter(is.finite(skew_24m)) %>%
+  group_by(ticker) %>%
+  mutate(
+    skew_mean_ts = mean(skew_24m, na.rm = TRUE),
+    skew_sd_ts   = sd(skew_24m, na.rm = TRUE),
+    skew_z_ts = ifelse(skew_sd_ts > 0, (skew_24m - skew_mean_ts) / ?, NA_real_)
+  ) %>%
+  ungroup() %>%
+  arrange(ticker, Date)
+
+Skew_zTimeseries
+```
+
+Task: Compute the cross sectional z score. Call this Skew-zCrossSection
+
+```{r}
+Skew_zCrossSection <- Train_RollSkew_24m %>%
+  mutate(Date = as.Date(Date), skew_24m = as.numeric(skew_24m)) %>%
+  filter(is.finite(skew_24m)) %>%
+  group_by(Date) %>%
+  mutate(
+    skew_mean_cs = mean(skew_24m, na.rm = TRUE),
+    skew_sd_cs   = sd(skew_24m, na.rm = TRUE),
+    skew_z_cs = ifelse(skew_sd_cs > 0, (skew_24m - skew_mean_cs) / ?, NA_real_)
+  ) %>%
+  ungroup() %>%
+  arrange(Date, ticker)
+
+Skew_zCrossSection
+```
+
+## Short Term Returns
+
+Task: Gather the most recent 1mth returns.
+
+```{r}
+MostRecent_1m_Returns <- Train %>%
+  mutate(Date = as.Date(Date), ret_1m = as.numeric(?)) %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  slice_tail(n = 1) %>%
+  ungroup()
+
+MostRecent_1m_Returns
+```
+
+Task: Compute the time series z score. Call this OneMthRet-zTimeSeries
+
+```{r}
+OneMthRet_zTimeSeries <- Train %>%
+  mutate(Date = as.Date(Date), ret_1m = as.numeric(OneMthSimpleRet)) %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(is_recent = (Date == max(Date, na.rm = TRUE))) %>%
+  summarise(
+    recent_date = max(Date, na.rm = TRUE),
+    ret_1m_recent  = ret_1m[which.max(?)],
+    ret_1m_mean_ts    = mean(ret_1m[!is_recent], na.rm = TRUE),
+    ret_1m_sd_ts      = sd(ret_1m[!is_recent], na.rm = TRUE),
+    ret_1m_z_ts            = (ret_1m_recent - ret_1m_mean_ts) / ret_1m_sd_ts,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(ticker))
+
+OneMthRet_zTimeSeries
+```
+
+Task: Compute the cross sectional z score. Call this OneMthRet-zCrossSection
+
+```{r}
+OneMthRet_zCrossSection <- Train %>%
+  mutate(Date = as.Date(Date), ret_1m = as.numeric(OneMthSimpleRet)) %>%
+  filter(is.finite(ret_1m)) %>%
+  ?(recent_date = max(Date, na.rm = TRUE), ret_1m_recent = ret_1m) %>%   # global most recent date
+  ?(Date == recent_date) %>%                     # keep that cross-section
+  mutate(
+    ret_1m_mean_cs = mean(ret_1m, na.rm = TRUE),
+    ret_1m_sd_cs   = sd(ret_1m, na.rm = TRUE),
+    ret_1m_z_cs    = ifelse(ret_1m_sd_cs > 0, (ret_1m - ret_1m_mean_cs) / ret_1m_sd_cs, NA_real_)
+  ) %>%
+  select(ticker, recent_date, ret_1m_recent, ret_1m_mean_cs, ret_1m_sd_cs, ret_1m_z_cs) %>% 
+  arrange(desc(ticker))
+
+OneMthRet_zCrossSection
+```
+
+## PeakDistance
+
+Task: Load the SP500 price series from GitHub
+
+```{r}
+
+SP500_Mthly_Prices <- ?(here("Data","SP500_Mthly_Prices.csv"))
+
+```
+
+Task: For each asset compute the distance of the price relative to the most trailing 24mth max price as $$\frac{P_{it}-\max(P^{24mth}_{it})}{\max(P^{24mth}_{it})}$$. Call this DistanceFromPeak
+
+```{r}
+DistanceFromPeak <- ? %>%
+  mutate(Date = as.Date(Date), price = as.numeric(adj_close)) %>%
+  filter(is.finite(price)) %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    peak_24m = slide_dbl(
+      price,
+      ~ max(.x, na.rm = FALSE),
+      .before = 23,
+      .complete = TRUE
+    ),
+    dist_from_peak = (price - peak_24m) / peak_24m
+  ) %>%
+  ungroup() %>%
+  select(ticker, Date, price, peak_24m, dist_from_peak)
+
+DistanceFromPeak
+```
+
+Task: Compute the time series z score of the most recent observation. Call this DistanceFromPeak-zTimeSeries
+
+```{r}
+DistanceFromPeak_zTimeSeries <- DistanceFromPeak %>%
+  mutate(Date = as.Date(Date),
+         dist_from_peak = as.numeric(dist_from_peak)) %>%
+  filter(is.finite(dist_from_peak)) %>%
+  arrange(ticker, Date) %>%
+  ?(ticker) %>%
+  mutate(is_recent = (Date == max(Date, na.rm = TRUE))) %>%
+  summarise(
+    date_recent = max(Date, na.rm = TRUE),
+    price_recent =  price[which.max(Date)],
+    peak_24_recent = peak_24m[which.max(Date)],
+    dfp_recent  = dist_from_peak[which.max(Date)],
+    dfp_mean_ts    = mean(dist_from_peak[!is_recent], na.rm = TRUE),
+    dfp_sd_ts      = sd(dist_from_peak[!is_recent], na.rm = TRUE),
+    dfp_z_ts = ifelse(dfp_sd_ts > 0,
+                               (dfp_recent - dfp_mean_ts) / dfp_sd_ts,
+                               NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(ticker))
+
+DistanceFromPeak_zTimeSeries
+```
+
+Task: Comptue the cross sectional z score of the most recent observation. Call this DistanceFromPeak-zCrossSection
+
+```{r}
+DistanceFromPeak_zCrossSection <- DistanceFromPeak %>%
+  mutate(Date = as.Date(Date), dist_from_peak = as.numeric(dist_from_peak)) %>%
+  filter(is.finite(dist_from_peak)) %>%
+  group_by(ticker) %>%
+  slice_max(order_by = Date, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(
+    dfp_mean_cs = mean(dist_from_peak, na.rm = TRUE),
+    dfp_sd_cs   = sd(dist_from_peak, na.rm = TRUE),
+    dfp_z_cs = ifelse(dfp_sd_cs > 0,
+                                  (dist_from_peak - ?) / dfp_sd_cs,
+                                  NA_real_)
+  ) %>%
+  arrange(desc(dfp_z_cs))
+
+DistanceFromPeak_zCrossSection
+
+```
+
+# Save
+
+Task: Gather all of the features into a dataframe called Features. This should be an NxK dataframe where N is the number of assets and K is the number of features.
+
+```{r}
+# Keep the most recent row per ticker
+last_by_ticker <- function(df, value_cols) {
+  df %>%
+    mutate(Date = as.Date(Date)) %>%
+    arrange(ticker, Date) %>%
+    group_by(?) %>%
+    slice_tail(n = 1) %>%
+    ungroup() %>%
+    select(ticker, all_of(value_cols))
+}
+
+# Base universe of assets (balanced panel)
+base_assets <- SP500_Mthly_Prices %>%
+  distinct(ticker)
+
+# --- 1) Momentum features (already “most recent” cross-section; time-series is per-asset summary) ---
+f_mom_ts <- Momentum_zTimeSeries %>%
+  transmute(ticker, mom_z_ts = mom_z_ts)
+
+f_mom_cs <- Momentum_zCrossSection %>%
+  transmute(ticker, mom_z_cs = mom_z_cs)
+
+f_mom_recent <- Momentum_zTimeSeries %>%
+  transmute(ticker, mom_recent = mom_recent)
+
+# --- 2) Volatility features (these are typically long time series; take most recent per ticker) ---
+f_vol_ts <- last_by_ticker(Volatility_zTimeseries, c("vol_z_ts")) %>%
+  rename(vol_z_ts = vol_z_ts)
+
+f_vol_cs <- last_by_ticker(Volatility_zCrossSection, c("vol_z_cs")) %>%
+  rename(vol_z_cs = vol_z_cs)
+
+# --- 3) Skewness features (typically long; take most recent) ---
+f_skew_ts <- last_by_ticker(Skew_zTimeseries, c("skew_z_ts")) %>%
+  rename(skew_z_ts = skew_z_ts)
+
+f_skew_cs <- last_by_ticker(Skew_zCrossSection, c("skew_z_cs")) %>%
+  rename(skew_z_cs = skew_z_cs)
+
+# --- 4) Most-recent 1m return z ---
+f_ret_1m_ts <- OneMthRet_zTimeSeries %>%
+  transmute(ticker, ret_1m_z_ts = ret_1m_z_ts)
+
+f_ret_1m_cs <- OneMthRet_zCrossSection %>%
+  transmute(ticker, ret_1m_z_cs = ret_1m_z_cs)
+
+
+# --- 5) Distance-from-peak z’s (both are already “most recent” summaries) ---
+f_dfp_ts <- DistanceFromPeak_zTimeSeries %>%
+  transmute(ticker, dfp_z_ts = dfp_z_ts)
+
+f_dfp_cs <- DistanceFromPeak_zCrossSection %>%
+  transmute(ticker, dfp_z_cs = dfp_z_cs)
+
+# --- Combine into NxK Features ---
+Features <- reduce(
+  list(
+    base_assets,
+    f_mom_recent,
+    f_mom_ts, f_mom_cs,
+    f_vol_ts, f_vol_cs,
+    f_skew_ts, f_skew_cs,
+    f_ret_1m_ts, f_ret_1m_cs,
+    f_dfp_ts, f_dfp_cs
+  ),
+  left_join,
+  by = "ticker"
+)
+
+Features
+```
+
+Task: Drop the One Month Returns from the Momentum dataframe
+
+```{r}
+SP500_Mthly_Momentum <- SP500_Mthly_Momentum %>%
+  ?(Date,ticker,momentum)
+```
+
+Task: Save Features as RData
+
+```{r}
+save(
+  Features, SP500_Mthly_Momentum,
+  file = here("Data", "SP500_Mthly_Momentum_Features.RData")
+)
+```
+
+Task: Save Features as CSV
+
+```{r}
+readr::write_csv(Features,
+                 here("Data", "SP500_Mthly_Momentum_Features.csv"))
+```
+
+Task: Save Momentum as CSV
+
+```{r}
+readr::write_csv(SP500_Mthly_Momentum,
+                 here("Data", "SP500_Mthly_Momentum.csv"))
+```
+
+## Verify
+
+Task: Clear the environment
+
+```{r}
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+```
+
+Task: Load the RData file
+
+```{r}
+load(here::here("Data", "SP500_Mthly_Momentum_Features.RData"))
+```
