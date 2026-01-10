@@ -1,0 +1,179 @@
+---
+title: "Static Signal Evaluation Demo"
+subtitle: "Evaluating the efficacy of a statically generated Signal "
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+# Data
+
+Task: Set a seed for consistent randomization
+
+```{r}
+  set.seed(123)
+```
+
+Task: Create a vector of 300 ticker labels of the form A001, A002, ..., A300
+
+```{r}
+  N <- 300
+  tickers <- paste0("A", sprintf("%03d", 1:N))
+```
+
+Task: Generate a signal_matrix of legnth N from a N(0,1) distribution, representing the signal strength
+
+```{r}
+  signal_matrix_vec <- rnorm(N, mean = 0, sd = 1)
+```
+
+Task: Create a signal_position vector based on the signal_matrix, assigning 1 for values above tau, -1 for values below -tau, and 0 otherwise
+
+```{r}
+  tau <- 0.05
+  signal_position_vec <- ifelse(signal_matrix_vec >  tau,  1,
+                                ifelse(signal_matrix_vec < -tau, -1, 0))
+```
+
+Task: Generate test period returns from a linear model loosely related to signal strength. ret = 0.01\*signal + N(0,0.05) noise
+
+```{r}
+  eps <- rnorm(N, 0, 0.05)
+  ret_simple <- 0.01 * signal_matrix_vec + eps
+```
+
+Task: Format the signal_position and test_returns as data frames with ticker labels
+
+```{r}
+  signal_position <- data.frame(ticker = tickers, signal_position = signal_position_vec)
+  test_returns <- data.frame(ticker = tickers, test_returns = ret_simple)
+```
+
+Task: Format the meta data for labels
+
+```{r}
+  Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "Momentum")
+```
+
+# Signal
+
+Task: Set the threshold for classification
+
+```{r}
+return_threshold <- 0.0025
+```
+
+Task: Call the signal_evaluation_static function
+
+```{r}
+  SignalEval <- signal_evaluation_static(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+```
+
+## Signal Evaluation
+
+Task: Display the TradeResults and their accompanying percent table
+
+```{r}
+SignalEval$TradeResults
+SignalEval$TradeResults_Percent
+```
+
+Q: Interpret the first row of the Percent table
+
+A:
+
+-   .257: In 25.7% of all observations we went long & there were positive test period returns
+-   0.01: In 1% of all observations we didn't trade and there were positive test period returns
+-   0.227: In 22.7% of all observations we went short and there were positive test period returns
+-   0.493: In 49.3% of all observations where were positive test period returns
+
+Task: Display the violin plots of test returns by signal, outcome, and all combos
+
+```{r}
+SignalEval$plots$signal
+SignalEval$plots$facet
+SignalEval$plots$combo
+```
+
+Task: Display summary table of sample stats
+
+```{r}
+SignalEval$summary_table
+```
+
+Task: Display Info Coefficent
+
+```{r}
+SignalEval$summary_ic_tbl
+```
+
+Q: What does the IC all mean? Is it statistically significant?
+
+A:
+
+-   IC captures the correlation between the signal and test period returns
+-   The IC of 0.0847 has a p value of 0.1432, implying that we fail to reject the null that IC = 0, suggesting that the signal has little predictive power over test period returns
+-   Note that the results are similar if we focus only on the observations where we took a position (Acted Only)
+
+Task: Display the Hit Rate
+
+```{r}
+SignalEval$hit_table
+```
+
+Q: What does the Hit Rate mean? What does the p value and Coverage suggest?
+
+A:
+
+-   The Hit Rate of .52 implies that for 52% of the observations our position correctly predicted the direction of test period returns.
+-   The p value of .355 suggests that we fail to reject the null that Hit Rate = 0.5, indicating that the signal has little predictive power over test period returns
+-   The coverage of .966 implies that we were active roughly 96% of the observations.
+
+Task: Display the confusion matrix
+
+```{r}
+SignalEval$confusion_report
+```
+
+Q: Interpret each of the metrics for Long positions
+
+A:
+
+-   TP (True Positive): 77 observations we went long and test returns were positive
+-   FP (False Positive): 64 observations we went long but test returns were negative
+-   FN (False Negative): 71 observations we didn't go long but test returns were positive
+-   TN (True Negative): 88 observations we didn't go long and test returns were negative
+-   n (300): Total number of observations considered for long position classification
+-   Accuracy (.55): 55% of all observations were classified correctly
+-   Precision (0.55): 55% of observations where we went long had positive test returns
+-   Recall (.52): 50\$ of observations where test returns were positive we went long
+-   specificity (.58): 58% of observations where test returns were negative we didn't go long
+-   Type 1 Error (.42): 42% of observations where test returns were negative we went long
+-   Type 2 Error (.48): 48% of obsevrations test returns were positive we didn't go long
+-   f1 (.53): The harmonic mean of precision and recall for long positions
+-   mcc (.10): Matthews correlation coefficient for long positions, measuring the quality of binary classifications
