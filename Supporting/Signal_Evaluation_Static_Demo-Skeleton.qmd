@@ -1,0 +1,163 @@
+---
+title: "Static Signal Evaluation Demo"
+subtitle: "Evaluating the efficacy of a statically generated Signal "
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+?
+```
+
+# Data
+
+Task: Set a seed for consistent randomization
+
+```{r}
+?
+```
+
+Task: Create a vector of 300 ticker labels of the form A001, A002, ..., A300
+
+```{r}
+  N <- 300
+  tickers <- ?("?", sprintf("%03d", 1:N))
+```
+
+Task: Generate a signal_matrix of legnth N from a N(0,1) distribution, representing the signal strength
+
+```{r}
+  signal_matrix_vec <- ?(N, mean = 0, sd = 1)
+```
+
+Task: Create a signal_position vector based on the signal_matrix, assigning 1 for values above tau, -1 for values below -tau, and 0 otherwise
+
+```{r}
+  tau <- 0.05
+  signal_position_vec <- ifelse(signal_matrix_vec >  ?,  1,
+                                ifelse(signal_matrix_vec < ?, -1, 0))
+```
+
+Task: Generate test period returns from a linear model loosely related to signal strength. ret = 0.01\*signal + N(0,0.05) noise
+
+```{r}
+  eps <- rnorm(N, 0, 0.05)
+  ret_simple <- 0.01 * signal_matrix_vec + ?
+```
+
+Task: Format the signal_position and test_returns as data frames with ticker labels
+
+```{r}
+  signal_position <- data.frame(ticker = tickers, signal_position = signal_position_vec)
+  test_returns <- ?(ticker = tickers, test_returns = ret_simple)
+```
+
+Task: Format the meta data for labels
+
+```{r}
+  Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "Momentum")
+```
+
+# Signal
+
+Task: Set the threshold for classification
+
+```{r}
+return_threshold <- 0.0025
+```
+
+Task: Call the signal_evaluation_static function
+
+```{r}
+  SignalEval <- ?(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+```
+
+## Signal Evaluation
+
+Task: Display the TradeResults and their accompanying percent table
+
+```{r}
+SignalEval$TradeResults
+SignalEval$TradeResults_?
+```
+
+Q: Interpret the first row of the Percent table
+
+A:
+
+
+
+
+Task: Display the violin plots of test returns by signal, outcome, and all combos
+
+```{r}
+SignalEval$plots$signal
+SignalEval$plots$facet
+SignalEval?
+```
+
+Task: Display summary table of sample stats
+
+```{r}
+SignalEval?
+```
+
+Task: Display Info Coefficent
+
+```{r}
+SignalEval?
+```
+
+Q: What does the IC all mean? Is it statistically significant?
+
+A:
+
+
+
+
+Task: Display the Hit Rate
+
+```{r}
+SignalEval$hit_table
+```
+
+Q: What does the Hit Rate mean? What does the p value and Coverage suggest?
+
+A:
+
+
+
+
+Task: Display the confusion matrix
+
+```{r}
+SignalEval$confusion_report
+```
+
+Q: Interpret each of the metrics for Long positions
+
+A:
+
+
