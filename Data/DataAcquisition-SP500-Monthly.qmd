@@ -1,0 +1,287 @@
+---
+title: "Data Acquisition "
+subtitle: "Using API to pull SP500 prices"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+In one of the primary examples for this course we will be working with data on the SP500.
+
+Our empirical goal here is to use an API to pull that data and clean so that it is ready for further analysis
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+
+source(here("Supporting", "PackageLoads.R")) 
+```
+
+# Data Acquisition
+
+## Get tickers
+
+Task: use tidyquant tq_index function to grab constituents of SP500
+
+```{r}
+sp500_members <- tq_index("SP500")  
+tickers <- sp500_members$symbol
+```
+
+## Set Date Range
+
+Task: Set end date as 30Nov2025. Set start data as 10yrs prior
+
+```{r}
+end_date   <- as.Date("2025-11-30")
+start_date <- end_date %m-% years(10)
+```
+
+## Get index prices
+
+Task: use tq_get to pull the SP500 index monthly value using the adjusted closing price for the last trading day of each month
+
+```{r}
+spx_symbol <- "^GSPC"
+
+spx_monthly <- tq_get(spx_symbol,
+                      from = start_date,
+                      to   = end_date,
+                      get  = "stock.prices") %>%
+  group_by(symbol) %>%
+  tq_transmute(
+    select      = adjusted,          # use adjusted close
+    mutate_fun  = to.monthly,
+    indexAt     = "lastof",
+    col_rename  = "adj_close"
+  )
+```
+
+## Get constituent prices
+
+Task: Use tq_get to pull monthly adjusted closing price data for all the constituents.
+
+Warning: This may take several minutes to run as it is pulling data for 500 stocks. Note also that this is not an institutional grade API, so there may be occasional timeouts or other issues such as some stocks not loading. Pro Tip: Load small subsets of tickers.
+
+```{r}
+
+sp500_monthly <- tq_get(tickers,
+                        from = start_date,
+                        to   = end_date,
+                        get  = "stock.prices") %>%
+  group_by(symbol) %>%
+  tq_transmute(
+    select      = adjusted,
+    mutate_fun  = to.monthly,
+    indexAt     = "lastof",
+    col_rename  = "adj_close"
+  ) %>%
+  ungroup() %>%
+  left_join(
+    sp500_members %>% select(symbol, company),
+    by = "symbol"
+  ) %>%
+  relocate(company, .after = symbol)
+```
+
+## Combine
+
+Task: Combine the index and constituents into a single dataframe
+
+```{r}
+Price <- rbind(spx_monthly %>% select(date, symbol, adj_close),
+      sp500_monthly %>% select(date, symbol, adj_close)) %>%
+  select(date, symbol, adj_close) %>%
+  pivot_wider(
+    names_from  = symbol,
+    values_from = adj_close
+  )%>% 
+  rename("SP500" = "^GSPC","Date" = "date")
+```
+
+# Clean
+
+## Gauge how dirty is the dataset
+
+Task: Drop the date column and convert to long
+
+```{r}
+Price_long <- Price %>%
+  pivot_longer(
+    cols = -Date,
+    names_to = "ticker",
+    values_to = "adj_close"
+  )
+```
+
+Task: Compute the fraction of missing observations for each ticker. Arrange from largest to smallest fraction missing
+
+```{r}
+missing_by_ticker <- Price_long %>%
+  summarise(
+    missing_frac = mean(is.na(adj_close)),
+    .by = ticker
+  ) %>%
+  arrange(desc(missing_frac))
+head(missing_by_ticker)
+
+```
+
+Task: Compute fraction of missing for each date
+
+```{r}
+missing_by_date <- Price_long %>%
+  summarise(
+    missing_frac = mean(is.na(adj_close)),
+    .by = Date
+  )
+head(missing_by_date)
+tail(missing_by_date)
+
+```
+
+Task: For stock, find the first date at which it entered the sample. Summarize and provide counts by year
+
+```{r}
+entry_dates <- Price_long %>%
+  filter(!is.na(adj_close)) %>%
+  summarise(
+    first_date = min(Date),
+    .by = ticker
+  ) %>%
+  arrange(first_date)
+head(entry_dates)
+summary(entry_dates$first_date)
+
+entry_dates_sum <- entry_dates %>%
+  mutate(year = lubridate::year(first_date)) %>%
+  group_by(year) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  arrange(desc(n))
+
+
+```
+
+Task: Plot the number of stocks without missing data in our panel over time.
+
+```{r}
+Price_long %>%
+  summarise(active_stocks = sum(!is.na(adj_close)), .by = Date) %>%
+  ggplot(aes(Date, active_stocks)) +
+  geom_line() +
+  labs(title = "Number of Active Stocks Over Time")
+
+```
+
+## Clean the dataset
+
+Find all tickers with entry date \> start_date
+
+```{r}
+todrop<-entry_dates %>%
+  filter(first_date > start_date) %>%
+  select(ticker)
+```
+
+Task: Create a balanced panel by dropping any tickers that have not been trading for at least 10yrs. SP500_Mthly_Prices
+
+```{r}
+SP500_Mthly_Prices <-Price_long %>%
+  filter(!ticker %in% todrop$ticker)
+n_distinct(SP500_Mthly_Prices$ticker)
+
+```
+
+Task: Verify balance of the panel by computing the count of tickers on each date. Then compute the min and max of those counts.
+
+```{r}
+SP500_Mthly_Prices %>%
+  dplyr::count(Date) %>%
+  summarise(min = min(n), max = max(n))
+
+```
+
+# Engineering
+
+Task: Construct a dataframe of simple 1mth returns. SP500-Monthly-SimpleReturns
+
+```{r}
+SP500_Mthly_SimpleReturns <- SP500_Mthly_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  summarise(
+    Date = Date[-1],
+    OneMthSimpleRet = adj_close[-1] / adj_close[-length(adj_close)] - 1,
+    .groups = "drop"
+            )
+```
+
+Task: Construct a dataframe of log 1mth returns. SP500-Monthly-LogReturns
+
+```{r}
+SP500_Mthly_LogReturns <- SP500_Mthly_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  summarise(
+    Date = Date[-1],
+    OneMthLogRet = log(adj_close[-1]) - log(adj_close[-length(adj_close)]),
+    .groups = "drop"
+            )
+```
+
+# Save
+
+Task: Save SP500_Mthly_Prices, SP500_Mthly_SimpleReturns, and SP500_Mthly_LogReturns to a single R workspace using "save"
+
+```{r}
+save(
+  SP500_Mthly_Prices,
+  SP500_Mthly_SimpleReturns,
+  SP500_Mthly_LogReturns,
+  file = here("Data", "SP500_Monthly_Data.RData")
+)
+```
+
+Task: Save the SP500_Mthly_Prices, SP500_Mthly_SimpleReturns, and SP500_Mthly_LogReturns to individual csv files
+
+```{r}
+readr::write_csv(SP500_Mthly_Prices,
+                 here("Data", "SP500_Mthly_Prices.csv"))
+
+
+readr::write_csv(SP500_Mthly_SimpleReturns,
+                 here("Data", "SP500_Mthly_SimpleReturns.csv"))
+
+readr::write_csv(SP500_Mthly_LogReturns,
+                 here("Data", "SP500_Mthly_LogReturns.csv"))
+```
+
+## Verify saved
+
+Task: Clear the environment
+
+```{r}
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+```
+
+Task: Load the RData file
+
+```{r}
+load(here::here("Data", "SP500_Monthly_Data.RData"))
+```
