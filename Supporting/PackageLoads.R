@@ -18,8 +18,12 @@ pkgs <- c(
   "tidyquant", "here", "slider",
   "purrr", "pROC", "quadprog","sandwich", "lmtest","boot", 
   "plotly", "tibble", "mclust", "ggforce", 
-  "factoextra", "cluster", "NbClust", "e1071"
+  "factoextra", "cluster", "NbClust", "e1071", "ClusterR", 
+  "proxy", "igraph","ggraph", "ggrepel", "Silhouette", "caret", 
+  "keras3", "torch", "tensorflow",
+  "class", "FNN"
 )
+
 
 failed_pkgs <- character()
 
@@ -73,23 +77,7 @@ if (length(failed_pkgs) > 0) {
 
 
 # Load other helper functions
-
-# Load other helper functions with error handling
-helper_files <- c(
-  here("Supporting", "Signal_Evaluation_Static.R"),
-  here("Supporting", "Signal_Evaluation_Dynamic.R"),
-  here("Supporting", "ConstructPortfolio.R"),
-  here("Supporting", "DailyPerformanceStats.R")
-)
-
-for (f in helper_files) {
-  tryCatch(
-    {
-      source(f)
-      message(sprintf("Successfully sourced: %s", f))
-    },
-    error = function(e) {
-      warning(sprintf("Failed to source file '%s': %s", f, e$message))
-    }
-  )
-}
+source(here("Supporting","Signal_Evaluation_Static.R"))
+source(here("Supporting","Signal_Evaluation_Dynamic.R"))
+source(here("Supporting","ConstructPortfolio.R"))
+source(here("Supporting","DailyPerformanceStats.R"))

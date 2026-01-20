@@ -1,14 +1,16 @@
-# signal_evaluation_static.R
-# Full, self-contained file that defines signal_evaluation_static()
-# and demonstrates usage with toy data at the bottom.
+# signal_evaluation_static_20Janv1_patched.R
+# Patched version: adds compute_return_comparison_table() and returns its result
+# Based on original file: Signal_Evaluation_Static_20Janv1.R
+#
+# NOTE: This file is intended to be a drop-in replacement for the original.
+# It preserves all original functionality and appends the return comparison table.
+#
+# (Keep packages / imports consistent with your environment: dplyr, tibble, ggplot2, e1071, rlang are used.)
 
-
-
-# ---- Main function ----
 signal_evaluation_static <- function(test_returns,
-                                     Meta,
-                                     return_threshold,
-                                     signal_position) {
+                                             Meta,
+                                             return_threshold,
+                                             signal_position) {
   
   # -----------------------
   # Local helper functions
@@ -163,31 +165,48 @@ signal_evaluation_static <- function(test_returns,
     )
   }
   
-  build_contingency <- function(pred_pos, actual_pos) {
-    pred_pos <- as.logical(pred_pos)
-    actual_pos <- as.logical(actual_pos)
+  
+  # safer build_contingency: explicit, named, and robust to factor/numeric inputs
+  build_contingency <- function(pred_pos, actual_pos, na_to_false = TRUE) {
+    # Try to coerce to logical in a predictable way
+    pred_pos_l <- as.logical(pred_pos)
+    actual_pos_l <- as.logical(actual_pos)
     
-    tp <- sum(pred_pos & actual_pos, na.rm = TRUE)
-    fp <- sum(pred_pos & !actual_pos, na.rm = TRUE)
-    fn <- sum(!pred_pos & actual_pos, na.rm = TRUE)
-    tn <- sum(!pred_pos & !actual_pos, na.rm = TRUE)
-    mat <- matrix(c(tp, fp, fn, tn), nrow = 2, byrow = TRUE)
-    rownames(mat) <- c("pred_pos", "pred_neg")
-    colnames(mat) <- c("act_pos", "act_neg")
+    if (na_to_false) {
+      pred_pos_l[is.na(pred_pos_l)] <- FALSE
+      actual_pos_l[is.na(actual_pos_l)] <- FALSE
+    }
+    
+    tab <- table(
+      predicted = factor(pred_pos_l, levels = c("TRUE", "FALSE")),
+      actual    = factor(actual_pos_l, levels = c("TRUE", "FALSE"))
+    )
+    
+    mat <- matrix(as.integer(tab), nrow = 2, byrow = FALSE)
+    rownames(mat) <- c("pred_TRUE", "pred_FALSE")
+    colnames(mat) <- c("act_TRUE", "act_FALSE")
     mat
   }
   
   confusion_stats_from_table <- function(tab) {
-    tp <- as.numeric(tab[1,1])
-    fp <- as.numeric(tab[1,2])
-    fn <- as.numeric(tab[2,1])
-    tn <- as.numeric(tab[2,2])
+    get_cell <- function(mat, r, c) {
+      if (r %in% rownames(mat) && c %in% colnames(mat)) {
+        as.numeric(mat[r, c])
+      } else {
+        0
+      }
+    }
+    
+    tp <- get_cell(tab, "pred_TRUE", "act_TRUE")
+    fp <- get_cell(tab, "pred_TRUE", "act_FALSE")
+    fn <- get_cell(tab, "pred_FALSE", "act_TRUE")
+    tn <- get_cell(tab, "pred_FALSE", "act_FALSE")
     
     n <- tp + tn + fp + fn
-    accuracy <- (tp + tn) / n
-    precision <- ifelse((tp + fp) > 0, tp / (tp + fp), NA_real_)
-    recall    <- ifelse((tp + fn) > 0, tp / (tp + fn), NA_real_)
-    specificity <- ifelse((tn + fp) > 0, tn / (tn + fp), NA_real_)
+    accuracy <- if (n > 0) (tp + tn) / n else NA_real_
+    precision <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+    recall    <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+    specificity <- if ((tn + fp) > 0) tn / (tn + fp) else NA_real_
     fpr <- 1 - specificity
     fdr <- ifelse((tp + fp) > 0, fp / (tp + fp), NA_real_)
     f1 <- ifelse(!is.na(precision) && !is.na(recall) && (precision + recall) > 0,
@@ -209,12 +228,32 @@ signal_evaluation_static <- function(test_returns,
     )
   }
   
+  # ---- REPLACE existing eval_confusionmatrix with this robust version ----
   eval_confusionmatrix <- function(df, pos_outcome_value, prediction_signal_value) {
-    actual_pos <- df$success == pos_outcome_value
     predicted_pos <- df$signal_position == prediction_signal_value
-    tab <- build_contingency(predicted_pos, actual_pos)
-    stats <- confusion_stats_from_table(tab)
-    list(table = tab, stats = stats)
+    
+    if (pos_outcome_value ==  1L) {
+      actual_pos <- df$success ==  1L
+      actual_neg <- df$success == -1L
+    } else if (pos_outcome_value == -1L) {
+      actual_pos <- df$success == -1L
+      actual_neg <- df$success ==  1L
+    } else {
+      actual_pos <- df$success ==  0L
+      actual_neg <- df$success !=  0L
+    }
+    
+    tp <- sum(predicted_pos & actual_pos, na.rm = TRUE)
+    fp <- sum(predicted_pos & actual_neg, na.rm = TRUE)
+    fn <- sum((!predicted_pos) & actual_pos, na.rm = TRUE)
+    tn <- sum((!predicted_pos) & actual_neg, na.rm = TRUE)
+    
+    mat <- matrix(c(tp, fp, fn, tn), nrow = 2, byrow = TRUE)
+    rownames(mat) <- c("pred_TRUE", "pred_FALSE")
+    colnames(mat) <- c("act_TRUE", "act_FALSE")
+    
+    stats <- confusion_stats_from_table(mat)
+    list(table = mat, stats = stats)
   }
   
   tidy_case <- function(name, case_obj) {
@@ -226,7 +265,6 @@ signal_evaluation_static <- function(test_returns,
   # Core evaluation flow
   # -----------------------
   
-  # 1) create success indicator (1/0/-1)
   test_returns_success <- test_returns %>%
     transmute(
       ticker,
@@ -237,7 +275,6 @@ signal_evaluation_static <- function(test_returns,
       )
     )
   
-  # 2) assemble evaluation_data (merge signal positions + returns + success)
   evaluation_data <- signal_position %>%
     inner_join(test_returns_success, by = "ticker") %>%
     left_join(test_returns, by = "ticker") %>%
@@ -265,7 +302,6 @@ signal_evaluation_static <- function(test_returns,
   # -----------------------
   # Trade results
   # -----------------------
-  # build wide table first
   TradeResults <- evaluation_data %>%
     mutate(return_category = return_bucket) %>%
     group_by(return_category, signal_position) %>%
@@ -276,7 +312,6 @@ signal_evaluation_static <- function(test_returns,
       values_fill = 0
     )
   
-  # programmatic mapping from numeric-like names to friendly labels
   map_names <- c("-1" = "Short", "0" = "Neutral", "1" = "Long")
   for (old in names(map_names)) {
     if (old %in% names(TradeResults)) {
@@ -284,27 +319,22 @@ signal_evaluation_static <- function(test_returns,
     }
   }
   
-  # rename return_category to the display name if present
   if ("return_category" %in% names(TradeResults)) {
     names(TradeResults)[names(TradeResults) == "return_category"] <- "Test Period Returns"
   }
   
-  # ensure the Long/Neutral/Short columns exist and are numeric (create missing as 0)
   for (col in c("Long", "Neutral", "Short")) {
     if (!col %in% names(TradeResults)) {
       TradeResults[[col]] <- 0L
     }
-    # coerce to integer (or numeric) to be safe for arithmetic
     TradeResults[[col]] <- as.integer(TradeResults[[col]])
   }
   
-  # compute Sum safely and select/arrange
   TradeResults <- TradeResults %>%
     mutate(Sum = Long + Neutral + Short) %>%
     select(`Test Period Returns`, Long, Neutral, Short, Sum) %>%
     arrange(`Test Period Returns`)
   
-  # totals row: sum numeric columns and append a row labeled "Sum"
   totals_row <- TradeResults %>%
     summarise(
       `Test Period Returns` = "Sum",
@@ -316,8 +346,6 @@ signal_evaluation_static <- function(test_returns,
   
   TradeResults <- bind_rows(TradeResults, totals_row)
   
-  
-  # percent table
   total_sum <- TradeResults$Sum[TradeResults$`Test Period Returns` == "Sum"]
   TradeResults_Percent <- TradeResults %>%
     mutate(
@@ -393,7 +421,6 @@ signal_evaluation_static <- function(test_returns,
   tbl_tidy <- tbl_tidy %>%
     mutate(across(where(is.numeric), ~ round(.x, 3)))
   
-  
   # -----------------------
   # Confusion matrices & stats
   # -----------------------
@@ -450,6 +477,58 @@ signal_evaluation_static <- function(test_returns,
     arrange(Metric) %>%
     mutate(across(where(is.numeric), ~ round(.x, 2)))
   
+  # -----------------------
+  # New: Return comparison table (4 rows)
+  # -----------------------
+  compute_return_comparison_table <- function(df, ret_col = "test_returns", sig_col = "signal_position") {
+    # helper to extract numeric vector for a group
+    vec <- function(condition) {
+      x <- df[[ret_col]][which(condition)]
+      as.numeric(x[!is.na(x)])
+    }
+    
+    compute_row <- function(name, condA, condB, alt = "greater") {
+      x <- vec(condA)
+      y <- vec(condB)
+      
+      mean_x <- if (length(x) > 0) mean(x) else NA_real_
+      mean_y <- if (length(y) > 0) mean(y) else NA_real_
+      avg_diff <- mean_x - mean_y
+      
+      if (length(x) >= 2 && length(y) >= 2) {
+        tt <- t.test(x, y, alternative = alt, var.equal = FALSE)
+        tstat <- as.numeric(tt$statistic)
+        pval  <- as.numeric(tt$p.value)
+      } else {
+        tstat <- NA_real_
+        pval  <- NA_real_
+      }
+      
+      tibble::tibble(
+        comparison = name,
+        Avg_Ret = avg_diff,
+        t_stat  = tstat,
+        p_one_sided = pval,
+        n_A = length(x),
+        n_B = length(y)
+      )
+    }
+    
+    is_long    <- df[[sig_col]] ==  1L
+    is_short   <- df[[sig_col]] == -1L
+    is_neutral <- df[[sig_col]] ==  0L
+    
+    rows <- list(
+      compute_row("Long vs Not-Long",     is_long,            !is_long),
+      compute_row("Short vs Not-Short",   is_short,           !is_short),
+      compute_row("Neutral vs Not-Neutral", is_neutral,       !is_neutral),
+      compute_row("Long vs Short",         is_long,            is_short)
+    )
+    
+    res <- do.call(rbind, rows)
+    res <- res[, c("comparison", "Avg_Ret", "t_stat", "p_one_sided", "n_A", "n_B")]
+    return(res)
+  }
   
   # -----------------------
   # Plots (ggplot objects returned)
@@ -479,6 +558,9 @@ signal_evaluation_static <- function(test_returns,
   # -----------------------
   # Return structured output
   # -----------------------
+  # compute return comparison table and include in output
+  return_comp <- compute_return_comparison_table(evaluation_data)
+  
   out <- list(
     Meta = Meta,
     return_threshold = return_threshold,
@@ -490,9 +572,9 @@ signal_evaluation_static <- function(test_returns,
     hit_table = tbl_tidy,
     confusion = list(long = long_t, short = short_t, neutral = neutral_t),
     confusion_report = report_stats_pretty,
+    return_comparison = return_comp,
     plots = list(signal = p_signal, facet = p_facet, combo = p_combo)
   )
   
   return(out)
 }
-
