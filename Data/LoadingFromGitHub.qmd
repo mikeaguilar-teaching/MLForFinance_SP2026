@@ -1,0 +1,100 @@
+---
+title: "GitHub Load"
+subtitle: "Examples on how to load data from our Class GitHub page"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Introduction
+
+Our class github repo is located here: https://github.com/mikeaguilar-teaching/MLForFinance_SP2026
+
+The data is stored here: https://github.com/mikeaguilar-teaching/MLForFinance_SP2026/tree/main/Data
+
+You can navigate to the site's Data directory, download manually, and then load into R.
+
+You can also download directly into R. However, we must use care with the URL. The preamble of the address should be altered slightly. See below.
+
+# Housekeeping
+
+```{r}
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+githome <- "https://raw.githubusercontent.com/mikeaguilar-teaching/MLForFinance_SP2026/main/"
+```
+
+# Loading RData
+
+Task: Use download.file to pull the RData file from
+
+```{r}
+download.file(
+  url = paste0(
+    githome,
+    "Data/SP500_Monthly_Data.RData"
+  ),
+  destfile = "SP500_Monthly_Data.RData",
+  mode = "wb"
+)
+
+load("SP500_Monthly_Data.RData")
+
+```
+
+# Loading a CSV
+
+Load the monthly prices CSV file.
+```{r}
+download.file(
+  url = paste0(githome,"Data/SP500_Mthly_Prices.csv"),
+  destfile = "SP500_Mthly_Prices.csv",
+  mode = "wb"
+)
+Prices  <- read.csv("SP500_Mthly_Prices.csv")
+```
+
+# Loading Many CSV
+
+```{r}
+
+dir.create("Data", showWarnings = FALSE)
+
+
+files <- c(
+  "Data/SP500_Mthly_Prices.csv",
+  "Data/SP500_Mthly_SimpleReturns.csv",
+  "Data/SP500_Mthly_LogReturns.csv"
+)
+
+for (f in files) {
+  download.file(
+    url = paste0(githome, f),
+    destfile = f,
+    mode = "wb"
+  )
+}
+list.files()
+
+data_list <- list()
+
+for (f in files) {
+  obj_name <- tools::file_path_sans_ext(f)
+  data_list[[obj_name]] <- read.csv(f)
+}
+Prices  <- data_list$SP500_Mthly_Prices
+SimpleR <- data_list$SP500_Mthly_SimpleReturns
+LogR    <- data_list$SP500_Mthly_LogReturns
+
+
+```
