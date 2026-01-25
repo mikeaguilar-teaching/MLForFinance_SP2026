@@ -158,19 +158,15 @@ Q: What does gross exposure mean?
 
 A:
 
-
 Q: Why doesn't gross exposure change throughout the sample?
-
-
 
 Q: Why isn't gross exposure = 100?
 
 A:
 
-
 # Fully Invested Weights
 
-Task: Create a weight dataframe. Set the
+Task: Create a weight dataframe. Set the weight equal to the signal value.
 
 ```{r}
 gross_scale <- sum(Signal_Matrix$signal_matrix)

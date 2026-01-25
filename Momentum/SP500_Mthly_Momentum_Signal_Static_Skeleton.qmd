@@ -110,7 +110,7 @@ Task: Construct a simple momentum strategy
 
 -   $s_{i,t}$ = LongCondition minus ShortCondition
 
-Task: Create a vector that contains the momentum on the last observation of the training period
+Task: Create a dataframe that contains the momentum on the last observation of the training period
 
 ```{r}
 
@@ -122,7 +122,7 @@ Signal_Matrix <- ? %>%
 Signal_Matrix
 ```
 
-Task: Create a vector that takes +1,0,-1 based upon long, neutral, short positioning. Long of signal \> tau. Short if signal less than -tau. Neutral otherwise.
+Task: Create a dataframe that takes +1,0,-1 based upon long, neutral, short positioning. Long of signal \> tau. Short if signal less than -tau. Neutral otherwise.
 
 ```{r}
 
@@ -184,8 +184,6 @@ SignalEval$TradeResults_Percent
 
 A:
 
-
-
 Task: Display and interpret the hit table
 
 ```{r}
@@ -193,7 +191,6 @@ SignalEval$hit_table
 ```
 
 A:
-
 
 Task: Display and interpret the Info Coeffient
 
@@ -203,8 +200,6 @@ SignalEval$summary_ic_tbl
 
 A:
 
-
-
 Task: Display and interpret the confusion matrix. Focus on the Recall, Specificity, and Type 1 error for Long and Short.
 
 ```{r}
@@ -212,4 +207,3 @@ SignalEval$confusion_report
 ```
 
 A:
-
