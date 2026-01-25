@@ -1,0 +1,246 @@
+---
+title: "Clustering Momentum"
+subtitle: "Using Hierarchical clustering to build a momentum signal"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+Let's explore the classic 12-2 momentum signal with the following characteristics
+
+-   Long assets with high momentum
+-   Short stocks with low momentum
+-   Neutral all other stocks
+
+Our empirical goal is cluster stocks by the momentum so that we can construct the 12-2 momentum signal.
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+# Data
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- read.csv(here("?","SP500_Mthly_SimpleReturns.csv"))
+```
+
+## Load monthly momentum
+
+```{r}
+Momentum <- read.csv(here("?","SP500_Mthly_Momentum.csv"))
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(?, by = c("Date", "ticker"))
+
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.
+
+```{r}
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date == test_date)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes. Repeat for momentum.
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+
+```
+
+# Hierarchical Clustering
+
+```{r}
+mostrecenttrain<-Train.Momentum.Constituents %>%
+    filter(Date == ?(Date, na.rm = TRUE)) %>%
+   na.omit()
+```
+
+```{r}
+X <- matrix(mostrecenttrain$momentum, ncol = 1)
+rownames(X) <-mostrecenttrain$ticker
+head(X)
+```
+
+Task: Compute the euclidean distance between each asset's momentum
+
+```{r}
+D  <- dist(X, method = "?")
+head(D)
+```
+
+Q: We could have also chosen other distance methods, such as Manhattan. Which might be more sensitive to market crashes, Euclidean or Manhattan?
+
+A: 
+
+Task: Form an agglomerative tree using Ward.D2 method based on the hclust function
+
+```{r}
+hc <- ?(D, method = "ward.D2")
+```
+
+
+Task: Plot the associated dendrogram
+
+```{r}
+plot(?, labels = FALSE, hang = -1,
+     main = "Dendrogram Tree (Ward.D2, Euclidean) — Momentum",
+     xlab = "", sub = "")
+```
+
+Q: Interpret the dendrogram
+
+A:
+
+
+
+Task: Impose 3 clusters by "cutting" the tree using cutree. We choose 3 because we'll soon need Long, Neutral, Short cluster.
+
+```{r}
+clusters <- ?(hc, k = ?)
+head(clusters)
+```
+
+Task: Plot the dendogram and overlay 3 clusters using the rect.hclust command
+
+```{r}
+plot(hc, labels = FALSE, hang = -1,
+     main = paste("Dendrogram Tree (Ward.D2, Euclidean)", "cut at K =", 3),
+     xlab = "", sub = "")
+
+?(?, k = ?, border = 2:6)
+```
+
+Task: Mutate mostrecenttrain to include a column with cluster ID
+
+```{r}
+mostrecenttrain$clusterID <- clusters[ mostrecenttrain$?]
+
+```
+
+# Signal Construction
+
+Task: Find the average momentum for each cluster
+
+```{r}
+ClusterStrength<-mostrecenttrain %>%
+  group_by(clusterID) %>%
+  summarize(
+    AvgMomentum = ?(momentum)
+  )
+ClusterStrength
+```
+
+Task: identify Long / Short clusters
+
+```{r}
+long_cluster  <- ClusterStrength %>%
+  slice_?(AvgMomentum, n = 1, with_ties = TRUE) %>%
+  pull(?) %>%
+  unique()
+
+short_cluster <- ClusterStrength %>%
+  slice_?(AvgMomentum, n = 1, with_ties = TRUE) %>%
+  pull(?) %>%
+  unique()
+```
+
+Task: Add cluster labels to the mostrecenttrain df to form the signal_position column
+
+```{r}
+ mostrecenttrain <- mostrecenttrain %>%
+  mutate(clusterID = as.integer(clusterID)) %>%
+  mutate(
+    signal_position = case_when(
+      clusterID %in% as.integer(?)  ~  1L,
+      clusterID %in% as.integer(?) ~ -1L,
+      TRUE                                     ~  0L   # neutral / no position
+    )
+  )
+```
+
+Task: prep the df for evaluation
+
+```{r}
+Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "K4HierMomentum")
+  
+signal_position <- data.frame(ticker = mostrecenttrain$ticker, 
+                              signal_position = mostrecenttrain$signal_position)
+
+test_returns <- data.frame(ticker = Test.Returns.Constituents$ticker, 
+                           test_returns = ?)
+
+```
+
+Task: evaluate the signal with a return threshold of 0.05
+
+```{r}
+return_threshold <- ?
+SignalEval <- ?(
+    test_returns = ?,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+SignalEval
+```
