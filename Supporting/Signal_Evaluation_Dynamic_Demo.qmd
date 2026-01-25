@@ -1,0 +1,100 @@
+---
+title: "Dynamic Signal Evaluation Demo"
+subtitle: "Evaluating the efficacy of a dynamically generated Signal "
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+Task: Create a sequence of 200 tickers following form T001, T002, etc..
+
+```{r}
+dates <- seq.Date(as.Date("2024-01-31"), by = "month", length.out = 8)
+n_assets <- 200
+tickers <- paste0("T", sprintf("%03d", 1:n_assets))
+```
+
+Task: Set seed for your generator. Create a panel of dates and tickers around N(0,1), then augment that score slightly with N(0,0.5\^2) noise
+
+```{r}
+set.seed(123)
+base_score <- rnorm(n_assets, 0, 1)
+panel <- expand_grid(date = dates, ticker = tickers) %>%
+  mutate(
+    score = base_score[match(ticker, tickers)] + rnorm(n(), 0, 0.5)
+  )
+```
+
+Task: Generate test period returns as .003\* score + N(0,.02\^2) noise
+
+```{r}
+panel <- panel %>%
+  mutate(
+    test_returns = 0.003 * score + rnorm(n(), 0, 0.02)
+  )
+```
+
+Task: discretize into signal_position per date using threshold tau (makes acted vs neutral)
+
+```{r}
+tau <- 0.7
+signal_position_panel <- panel %>%
+  transmute(date, ticker,
+            signal_position = ifelse(score > tau, 1,
+                                     ifelse(score < -tau, -1, 0)))
+```
+
+Task: Format for function call
+
+```{r}
+returns_panel <- panel %>%
+  transmute(date, ticker, test_returns = test_returns)
+
+Meta <- list(assetname = "ToyUniverse", benchmarkname = "SP500", signalname = "ToyMomentum")
+```
+
+Task: call the dynamic signal evaluator function
+
+```{r}
+res_dyn <- signal_evaluation_dynamic(
+  signal_position_ts = signal_position_panel,
+  returns_ts = returns_panel,
+  Meta = Meta,
+  return_threshold = 0,    # direction mode effectively in static
+  keep_static_results = FALSE,
+  verbose = TRUE
+)
+```
+
+Task: Inspect the results
+
+```{r}
+print(res_dyn$by_date)
+print(res_dyn$ts_summary)
+
+ggplot(res_dyn$by_date, aes(date, ic_acted)) + geom_line() + geom_point() +
+  labs(title = "IC (Acted Only) over time", y = "IC acted", x = "Date")
+
+ggplot(res_dyn$by_date, aes(date, hit_acted)) + geom_line() + geom_point() +
+  labs(title = "Hit Rate (Acted) over time", y = "Hit (acted)", x = "Date")
+```

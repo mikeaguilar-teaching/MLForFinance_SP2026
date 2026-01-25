@@ -21,7 +21,8 @@ pkgs <- c(
   "factoextra", "cluster", "NbClust", "e1071", "ClusterR", 
   "proxy", "igraph","ggraph", "ggrepel", "Silhouette", "caret", 
   "keras3", "torch", "tensorflow",
-  "class", "FNN"
+  "class", "FNN", "e1071", "randomForest", "xgboost", "gbm", "C50", "nnet", 
+  "rpart", "rpart.plot", "partykit"
 )
 
 

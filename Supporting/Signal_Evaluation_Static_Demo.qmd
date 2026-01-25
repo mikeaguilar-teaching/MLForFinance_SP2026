@@ -162,7 +162,7 @@ Q: What does the Hit Rate mean? What does the p value and Coverage suggest?
 A:
 
 -   The Hit Rate of .52 implies that for 52% of the observations our position correctly predicted the direction of test period returns.
--   The p value of .355 suggests that we fail to reject the null that Hit Rate = 0.5, indicating that the signal has little predictive power over test period returns
+-   The p value of .356 suggests that we fail to reject the null that Hit Rate = 0.5, indicating that the signal has little predictive power over test period returns
 -   The coverage of .966 implies that we were active roughly 96% of the observations.
 
 Task: Display the confusion matrix

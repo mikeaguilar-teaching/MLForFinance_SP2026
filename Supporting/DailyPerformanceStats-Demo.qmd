@@ -1,0 +1,121 @@
+---
+title: "Daily Performance Stats"
+subtitle: "Quick demo of the daily performance statistics function"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+
+```
+
+# Data
+
+Task: set seed 124 for simulations
+
+```{r}
+ set.seed(124)
+```
+
+Task: Create a dataframe called price with Date, Asset, and Benchmark columns. Dates should be daily starting from 2008-01-01 for 5yrs of daily trading activity. Asset and Benchmark should be cumulative products of random normal returns.
+
+```{r}
+ n <- 250*5
+ Price <- data.frame(
+   Date      = seq.Date(from = as.Date("2008-01-01"), by = "day", length.out = n),
+   Asset     = cumprod(1 + rnorm(n, 0.0005, 0.02)),
+   Benchmark = cumprod(1 + rnorm(n, 0.0003, 0.015))
+ )
+ 
+```
+
+# Peformance Stats
+
+Task: Set meta data
+
+```{r}
+ Meta <- list(asset_name = "MyPortfolio", benchmark_name = "Bencmark")
+```
+
+Task: Call DailyPerformanceStats function with Price, Meta, rf_annual = 0, and output_dir set to "../Output/DailyPerformanceStat"
+
+```{r}
+ results <- DailyPerformanceStats(Price, Meta, rf_annual = 0, output_dir ="./Output/DailyPerformanceStat")
+```
+
+Task: Display sample_stats_tbl
+
+```{r}
+results$sample_stats_tbl
+```
+
+Q: Interpret the results.
+
+A:
+
+-   Total %: total return over the sample period; e.g. total return over the last 5 days (5D).
+-   CAGR: Compound Annual Growth Rate, measures the mean annual growth rate of the investment over a specified investment period; e.g. CAGR over the last 5 days (5D).
+-   Notice that the benchmark has a higher total return and CAGR than the asset.
+
+Task: Display the risk_return_tbl
+
+```{r}
+results$risk_return_tbl
+```
+
+Q: Interpret the results.
+
+A:
+
+Sigma: standard deviation of daily returns, a measure of volatility Sharpe: (returns - rf_annual) / sigma; i.e. risk adjusted returns Sortino: (returns - rf_annual) / downside deviation; i.e. downside risk adjusted returns Omega: daily ratio of returns to losses relative to a threshold of 0. Skew: measure of asymmetry of the return distribution Excess Kurtosis: measure of the fatness of tails.\
+Min, etc..: various quantiles of the return distribution
+
+Task: Display the drawdowns_tbl
+
+```{r}
+results$drawdowns_tbl
+```
+
+Q: Interpret the results. Opening the MyPortfolio_underwater.png might be helpful.
+
+A:
+
+-   During the smallest drawdown (bottom of table), the asset peaked 2008-01-03, then bottomed on 2008-01-03 and recovered to the previous peak on 2008-01-05. The total drawdown lasted 3 days and the asset was down 1.48% at its trough.
+
+-   Notice that the most recent drawdown is still ongoing (NA in Recovery Date and Duration).
+
+Task: Display all of the plots
+
+```{r}
+results$price_plot
+results$return_plot
+results$sigma_plot
+results$drawdown_plot
+results$rel_perf_plot
+results$monthly_heatmap
+results$daily_heatmap
+results$corr_plot
+results$underwater_plot
+results$ccf_daily_plot
+results$ccf_weekly_plot
+
+```
