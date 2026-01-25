@@ -1,0 +1,688 @@
+---
+title: "Clustering Momentum"
+subtitle: "Using Minimum Spanning Tree to build a momentum signal"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+The classic 12-2 momentum signal has the following characteristics
+
+-   Long assets with high 12mth returns and low 2mth returns
+-   Short stocks with low 12mth returns and high 2mth returns
+-   Neutral all other stocks
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+# Data
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- read.csv(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+## Load monthly momentum
+
+```{r}
+Momentum <- read.csv(here("Data","SP500_Mthly_Momentum.csv"))
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(Momentum, by = c("Date", "ticker"))
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.  Create related dataframes for Returns and Momentum.
+
+```{r}
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date == test_date)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes. Repeat for momentum. Do so for the Train and Test periods. 
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+
+```
+
+# Create MST
+
+Task: Create a temp df containing the last 12 months of constituents' momentum
+
+```{r}
+df <- Train.Momentum.Constituents %>% 
+  mutate(Date = as.Date(?)) %>%
+  filter(Date > (max(Date, na.rm = TRUE) %m-% months(?)) )
+```
+
+Task: Create a wide dataframe from these past 12months of momentum
+
+```{r}
+momentum_wide <- df %>%
+  select(Date, ticker, momentum) %>% 
+  mutate(Date = as.Date(Date)) %>%
+  distinct(Date, ticker, .keep_all = TRUE) %>%
+  ?(
+    names_from  = ticker,
+    values_from = momentum
+  )
+```
+
+Task: Compute the correlation matrix across all the constituents' momentum. While doing so, be sure to ignore the Date column. Let's try doing this by embedding dplyr select within the cor function. Finally, display the resulting correlation matrix
+
+```{r}
+C <- ?(
+  momentum_wide %>% select(-?),
+  use = "pairwise.complete.obs"
+)
+
+C
+```
+
+
+
+Task: Convert the correlation matrix into a heatmap
+
+```{r}
+?(C, method = "color", type = "upper", tl.cex = 0.8)
+```
+
+
+Task: Create the Mantegna distance from those correlations
+
+```{r}
+D <- ?
+```
+
+Q: How does D change if C rises? What is the meaning?
+
+A: 
+
+Task: use graph_from_adjacency_matrix to convert the distance into an undirected adjacency matrix
+
+```{r}
+g_full <- ?(D, mode = "undirected", 
+                                      weighted = TRUE, diag = FALSE)
+```
+
+Task: Create the minimum spaning tree using mst. Use the "E" function to extract weights
+
+```{r}
+g_mst  <- ?(?, weights = ?)
+```
+
+Task: Visualize the tree.  Set seed to 123 and plot with ggraph.  
+
+```{r}
+set.seed(?)
+?(g_mst, layout = "fr") +
+  geom_edge_link(aes(width = 1/weight), alpha = 0.7) +
+  geom_node_point(size = 3) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_edge_width(range = c(0.2, 2), guide = "none") +
+  theme_void()
+```
+
+# Measuring Centrality
+
+## Degree Centrality
+
+Task: Compute degree centrality off of the g_mst and compute the mean degree centrality
+
+```{r}
+deg_cent <- ?(g_mst)
+mean(deg_cent)
+```
+
+Task: Sort the degree centrality and display the top 10
+
+```{r}
+sort(?, decreasing = TRUE)[?]
+```
+
+Q: Which asset has highest deg_cent? Interpret.
+
+A: 
+
+Task: assign the deg_cent to each vertices in the mst.  Use the "V" function and assign to a new attribute called deg_cent
+
+```{r}
+?(g_mst)$? <- deg_cent
+```
+
+Task: Visualize the tree with seed 123 and ggraph. 
+
+```{r}
+set.seed(?)
+xy <- layout_with_fr(g_mst)  
+?(g_mst, layout = "manual", x = xy[,1], y = xy[,2]) +
+  geom_edge_link(alpha = 0.6) +
+  geom_node_point(aes(size = deg_cent, fill = deg_cent), shape = 21, color = "black") +
+  scale_fill_gradient(low = "yellow", high = "red")+
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_size(range = c(1, 6)) +
+  scale_color_gradient(low = "lightblue", high = "darkblue") +
+  theme_void()
+
+```
+
+## Eigen Centrality
+
+Task: Compute Eigenvector centrality on the MST graph you built: g_mst. Set weights to 1 / E(g_mst)\$weights
+
+```{r}
+set.seed(123)
+ec <- ?(g_mst, weights = ?, directed = FALSE)
+```
+
+Q: Computing centrality with weights implies that not only the presence of a connection, but also the strength of a connection is considered. Why do we invert those weights from the MST when input into eigen_centrality?
+
+A: 
+
+Task: create a vector of the centrality scores. Sort them in decreasing order.
+
+```{r}
+eig_cent <- ec$?
+eig_cent <- sort(eig_cent, decreasing = TRUE)
+```
+
+Task: Use the V function to assign the eigen centrality scores to each vertex in the g_mst.
+```{r}
+?(g_mst)$eig_cent <- ec$vector
+```
+
+
+Task: Plot with ggraph
+```{r}
+set.seed(123)
+xy <- layout_with_fr(g_mst)  
+?(g_mst, layout = "manual", x = xy[,1], y = xy[,2]) +
+  geom_edge_link(alpha = 0.6) +
+  geom_node_point(aes(size = deg_cent, fill = eig_cent), shape = 21, color = "black") +
+  scale_fill_gradient(low = "yellow", high = "red")+
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_size(range = c(1, 6)) +
+  scale_color_gradient(low = "lightblue", high = "darkblue") +
+  theme_void()
+```
+
+Task: Display the top 10
+
+```{r}
+head(eig_cent, ?)
+```
+
+Q: What's strange about Google?
+
+A: 
+
+Task: reconstruct momentum_wide, but drop GOOGL
+
+```{r}
+momentum_wide <- df %>%
+  select(Date, ticker, momentum) %>% 
+  filter(ticker ?)%>%
+  mutate(Date = as.Date(Date)) %>%
+  distinct(Date, ticker, .keep_all = TRUE) %>%
+  pivot_wider(
+    names_from  = ticker,
+    values_from = momentum
+  )
+```
+
+Task: Recreate the correlation matrix
+
+```{r}
+C <- ?(
+  momentum_wide %>% select(-Date),
+  use = "pairwise.complete.obs"
+)
+```
+
+Task: Recreate the Mantegna distance from those correlations
+
+```{r}
+D <- ?
+```
+
+Task: use graph_from_adjacency_matrix to convert the distance into an undirected adjacency matrix
+
+```{r}
+g_full <- graph_from_adjacency_matrix(?, mode = "undirected", 
+                                      weighted = TRUE, diag = FALSE)
+```
+
+Task: Recreate the minimum spanning tree with the mst function
+
+```{r}
+g_mst  <- ?(g_full, weights = E(g_full)$weight)
+```
+
+Task: Recompute Eigenvector centrality on the new MST graph you built: g_mst. Set weights to 1 / E(g_mst)$weights
+```{r}
+set.seed(123)
+ec <- ?(g_mst, weights = ?, directed = FALSE)
+```
+
+Task: create a vector of the centrality scores. Sort them in decreasing order and display the top 10. 
+
+```{r}
+eig_cent <- ec$vector
+eig_cent <- ?(eig_cent, decreasing = TRUE)
+eig_cent[1:10]
+```
+
+
+Task: Use the "V" function to assign the eigen centrality scores to each vertex in the g_mst.
+
+```{r}
+
+?(g_mst)$eig_cent <- ec$vector
+```
+
+Task: Plot with ggraph
+```{r}
+set.seed(123)
+xy <- layout_with_fr(g_mst)  
+
+
+?(g_mst, layout = "manual", x = xy[,1], y = xy[,2]) +
+  geom_edge_link(alpha = 0.6) +
+  geom_node_point(aes(size = eig_cent, fill = eig_cent), shape = 21, color = "black") +
+  scale_fill_gradient(low = "yellow", high = "red")+
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_size(range = c(1, 6)) +
+  scale_color_gradient(low = "lightblue", high = "darkblue") +
+  theme_void()
+```
+
+Note: We could convert this into an interactive plot so that we can further explore the tree. We'll eschew that for now.
+
+## Centrality and Momentum
+
+Task: Create a tibble with tickers and centrality score, arranged by size of centrality
+
+```{r}
+cent_df <- tibble(
+  asset = names(ec$vector),
+  centrality = as.numeric(ec$?)
+) %>%
+  arrange(desc(centrality))
+```
+
+Task: Create a scatter plot with eigen centrality on the horizontal axis and momentum on the vertical axis.  Include markers for the 25th and 75th percentiles of each axis. Label each point with the asset ticker. Use ggrepel to avoid overlapping labels.
+
+```{r}
+M <- momentum_wide %>% na.omit() %>% select(-Date)
+  
+mom_df <- tibble(
+  asset    = colnames(M),
+  momentum = as.numeric(M[nrow(M), ])
+) %>%
+  filter(is.finite(momentum))
+
+plot_df <- cent_df %>%
+  inner_join(mom_df, by = "asset") %>%
+  filter(is.finite(centrality), is.finite(momentum))
+
+# 25th/75th cutlines
+cent_q25 <- quantile(plot_df$centrality, ?, na.rm = TRUE)
+cent_q75 <- quantile(plot_df$centrality, ?, na.rm = TRUE)
+mom_q25  <- quantile(plot_df$momentum,   ?, na.rm = TRUE)
+mom_q75  <- quantile(plot_df$momentum,   ?, na.rm = TRUE)
+
+ggplot(plot_df, aes(x = centrality, y = momentum, label = asset)) +
+  geom_vline(xintercept = c(cent_q25, cent_q75), linetype = "dashed", linewidth = 0.6) +
+  geom_hline(yintercept = c(mom_q25,  mom_q75 ), linetype = "dashed", linewidth = 0.6) +
+  geom_point(size = 2) +
+  geom_text_repel(max.overlaps = 25, size = 3) +
+  labs(x = "Eigenvector centrality", y = "Momentum") +
+  theme_minimal()
+```
+
+Q: What does this plot suggest about the potential veracity of this signal?
+
+A:
+
+# Construct the Signal
+
+Generate a compound signal wherein we
+
+-   Long assets whose momentum is above the 75th percentile and centrality is below the 25th percentile
+-   Short assets whose momentum is below the 25th percentile and centrality is above the 75th percentile
+
+Task: Assign signal value to each asset. Your output should be a df where each row is an asset, the column is the position, and each entry is either +1, 0, or -1.
+
+```{r}
+SignalStatic <- cent_df %>%
+  inner_join(mom_df, by = "asset") %>%
+  mutate(
+    mom_q25  = quantile(momentum,   ?, na.rm = TRUE),
+    mom_q75  = quantile(momentum,   ?, na.rm = TRUE),
+    cent_q25 = quantile(centrality, ?, na.rm = TRUE),
+    cent_q75 = quantile(centrality, ?, na.rm = TRUE),
+    position = case_when(
+      momentum > ?  & centrality ? ~  1L,  # Long
+      momentum < ?  & centrality ? ~ -1L,  # Short
+      TRUE                                            ~  0L
+    )
+  ) %>%
+  distinct(asset, position) %>%         # keep only required output columns
+  arrange(desc(position), asset)
+SignalStatic
+
+```
+
+## Test the Signal
+
+Task: Format so that easily fed into signal evaluation static. 
+
+```{r}
+Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "MST3Momentum")
+  
+signal_position <- data.frame(ticker = SignalStatic$asset, 
+                              signal_position = SignalStatic$position)
+
+test_returns <- data.frame(ticker = Test.Returns.Constituents$ticker, 
+                           test_returns = Test.Returns.Constituents$OneMthSimpleRet)
+```
+
+Task: Set the return_threshold for evaluation at mean + 2 sigma of the train period constituent returns
+
+```{r}
+return_threshold <- 2*sd(df$OneMthSimpleRet)+mean(df$OneMthSimpleRet)
+#Note: we already had df created.  We could have also referenced by Train.Returns.Constituents
+
+```
+
+Task: Call out to signal evaluation static to evaluate the efficacy of this signal.
+
+```{r}
+SignalEval <- ?(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+SignalEval
+```
+
+# Signal (Dynamic)
+
+## Restructure Test/Train
+
+Task: Construct rolling test and train samples from the 2017-01-31 through Nov2025
+
+```{r}
+test_begin_date <- as.Date("2017-01-31") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date >= test_begin_date) 
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+```
+
+Task: Create several ancillary dataframes of the Train and Test across Index and Constituents
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500") %>% na.omit()
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+```
+
+## Centrality
+
+Helper function to compute eigen centrality
+
+```{r}
+make_mst_eigencent <- function(momentum_panel_long) {
+  momentum_wide <- momentum_panel_long %>%
+    distinct(Date, ticker, .keep_all = TRUE) %>%
+    pivot_wider(names_from = ticker, values_from = momentum)
+
+  X <- momentum_wide %>% select(-Date)
+  if (nrow(X) < 2 || ncol(X) < 2) {
+    return(tibble(ticker = character(), centrality = numeric()))
+  }
+
+  C <- cor(as.matrix(X), use = "pairwise.complete.obs")
+  D <- sqrt(2 * (1 - C))
+  
+  diag(D) <- 0
+  maxD <- max(D[is.finite(D)], na.rm = TRUE)
+  if (!is.finite(maxD)) {
+    return(tibble(ticker = character(), centrality = numeric()))
+  }
+  D[!is.finite(D)] <- maxD * 10
+
+  g_full <- graph_from_adjacency_matrix(D, mode = "undirected", 
+                                        weighted = TRUE, diag = FALSE)
+  g_mst  <- mst(g_full, weights = E(g_full)$weight)
+
+  ev <- eigen_centrality(g_mst, weights = NULL)$vector
+
+  tibble(
+    ticker = names(ev),
+    centrality = as.numeric(ev)
+  )
+}
+```
+
+Task: Compute Eigenvector centrality for each asset within in each sample.
+
+```{r}
+
+window_months <- 12L
+dates_vec <- sort(unique(Train.Momentum.Constituents$Date))
+# ---- main loop: compute centrality within each sample window ----
+centrality_by_sample <- map_dfr(dates_vec, function(t_end) {
+
+  t_start <- as.Date(t_end) %m-% months(window_months - 1)
+  momentum_panel <- Train.Momentum.Constituents %>%
+    mutate(Date = as.Date(Date)) %>%
+    filter(Date >= t_start, Date <= t_end) %>%
+    transmute(momentum = momentum, Date, ticker)
+ 
+
+  cent <- make_mst_eigencent(momentum_panel)
+
+  cent %>%
+    mutate(Date = t_end) %>%
+    select(Date, ticker, centrality)
+})
+
+centrality_by_sample
+```
+
+Task: Focus on the most recent training period. Find the asset with the highest centrality score. Call that A. Also find the asset with the lowest centrality score. Call that B. Plot the centrality scores of A and B through time.
+
+```{r}
+t_last <- max(centrality_by_sample$Date, na.rm = TRUE)
+
+A <- centrality_by_sample %>%
+  filter(Date == t_last) %>%
+  slice_max(centrality, n = 1, with_ties = FALSE) %>%
+  pull(ticker)
+
+B <- centrality_by_sample %>%
+  filter(Date == t_last) %>%
+  slice_min(centrality, n = 1, with_ties = FALSE) %>%
+  pull(ticker)
+
+A
+B
+```
+
+Task: Plot the centrality over time of the assets who have the most and least centrality scores as of the last Training period.
+
+```{r}
+ab_ts <- centrality_by_sample %>%
+  filter(ticker %in% c(A, B)) %>%
+  mutate(asset = case_when(
+    ticker == A ~ paste0("A (Highest @ ", t_last, "): ", A),
+    ticker == B ~ paste0("B (Lowest @ ", t_last, "): ",  B)
+  )) %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Date)
+
+ggplot(ab_ts, aes(x = Date, y = centrality, group = asset, color = asset)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_x_date(
+    date_breaks = "1 year",
+    date_labels = "%Y"
+  )+
+  labs(
+    x = "Time",
+    y = "Eigenvector centrality (MST)",
+    title = "Centrality trajectories of most- and least-central assets (A and B)"
+  ) +
+  theme_minimal()
+
+```
+
+Q: What does the plot suggest about the assets and your signal?
+
+A: 
+
+## Construct the Signal
+
+Task: Assign signal value to each asset. Your output should be a df where cols = (time, asset, position), where signal position {+1, 0, or -1}.
+
+```{r}
+next_month <- function(d) ceiling_date(as.Date(d), "month") %m+% months(1)-days(1)
+signal_df <- centrality_by_sample %>%
+  inner_join(Train.Momentum.Constituents, by = c("Date", "ticker")) %>%
+  filter(is.finite(centrality), is.finite(momentum)) 
+
+# 25th/75th cutlines
+SignalDynamic <- signal_df %>%
+  group_by(Date) %>%
+  mutate(
+    mom_q25  = quantile(momentum, 0.25, na.rm = TRUE),
+    mom_q75  = quantile(momentum, 0.75, na.rm = TRUE),
+    cent_q25 = quantile(centrality, 0.25, na.rm = TRUE),
+    cent_q75 = quantile(centrality, 0.75, na.rm = TRUE),
+    position = case_when(
+      momentum >= mom_q75  & centrality <= cent_q25 ~  1L,   # Long
+      momentum <= mom_q25  & centrality >= cent_q75 ~ -1L,   # Short
+      TRUE                                          ~  0L
+    )
+  ) %>%
+  ungroup() %>%
+  transmute(
+    time = next_month(Date), # shift the signal date forward by one month
+    asset = ticker,
+    position
+  )
+
+SignalDynamic
+```
+
+## Test the Signal
+
+Task: Call out to signal evaluation dynamic to evaluate the efficacy of this signal.
+
+```{r}
+returns_panel <- Test.Returns.Constituents %>% 
+  filter(Date %in% unique(SignalDynamic$time)) %>%
+  transmute(ticker, date = Date, test_returns = OneMthSimpleRet)
+
+signal_position_panel <- SignalDynamic %>% 
+  transmute(ticker = asset, date = time, signal_position = position)
+
+Meta <- list(assetname = "Universe", benchmarkname = "SP500", signalname = "MSTMomentum")
+
+res_dyn <- ?(
+  signal_position_ts = signal_position_panel,
+  returns_ts = returns_panel,
+  Meta = Meta,
+  return_threshold = 0.05,    # direction mode effectively in static
+  keep_static_results = FALSE,
+  verbose = TRUE
+)
+res_dyn
+```
