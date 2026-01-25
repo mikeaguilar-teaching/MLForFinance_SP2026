@@ -1,0 +1,673 @@
+---
+title: "Clustering Momentum"
+subtitle: "Using GMM soft clustering to build a momentum signal"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+A slight variation of the classic 12-2 momentum signal has the following characteristics
+
+-   Long assets with high 12mth returns and low 2mth returns
+-   Short stocks with low 12mth returns and high 2mth returns
+-   Neutral all other stocks
+
+Our empirical goal is to cluster stocks by the 12mth and 2mth returns so that we can construct the 12-2 momentum signal.
+
+In this exercise we will use soft clustering via Gaussian Mixture Models (GMM).
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+```
+
+# Data
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- ?(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+## Load monthly momentum
+
+```{r}
+Momentum <- ?(here("Data","SP500_Mthly_Momentum.csv"))
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(Momentum, ? = c("Date", "ticker"))
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.
+
+```{r}
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% ?(!momentum)
+Train.Momentum <- Train %>% ?(!OneMthSimpleRet)
+
+Test <- merged_df %>% ?(Date == test_date)
+Test.Returns  <- Test %>% ?(!momentum)
+Test.Momentum <- Test %>% ?(!OneMthSimpleRet)
+
+```
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes.
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == ?)
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(?) == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(> == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(? == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(? == "SP500")
+
+```
+
+# Signal (Static)
+
+## Explore number of clusters
+
+Task: use the m/m simple returns to compute 12mth and 2mth returns.
+
+```{r}
+Train.Returns.Constituents <- Train.Returns.Constituents %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    Ret12m =
+      (1 + lag(OneMthSimpleRet,  0)) *
+      (1 + lag(OneMthSimpleRet,  ?)) *
+      (1 + lag(OneMthSimpleRet,  2)) *
+      (1 + lag(OneMthSimpleRet,  3)) *
+      (1 + lag(OneMthSimpleRet,  4)) *
+      (1 + lag(OneMthSimpleRet,  5)) *
+      (1 + lag(OneMthSimpleRet,  6)) *
+      (1 + lag(OneMthSimpleRet,  7)) *
+      (1 + lag(OneMthSimpleRet,  8)) *
+      (1 + lag(OneMthSimpleRet,  9)) *
+      (1 + lag(OneMthSimpleRet, 10)) *
+      (1 + lag(OneMthSimpleRet, 11)) *
+      (1 + lag(OneMthSimpleRet, 12)) ?,
+    Ret2m =
+      (1 + lag(OneMthSimpleRet,  0)) *
+      ?,
+    
+  ) %>%
+  ungroup()
+```
+
+Task: Create a temporary df that contains the returns of the constituents for the most recent training period.
+
+```{r}
+df <- Train.Returns.Constituents %>%
+  filter(Date == ?(?, na.rm = TRUE)) %>%
+  na.omit()
+```
+
+Task: select only the 12mth and 2mth returns and stdz them
+
+```{r}
+X <- as.matrix(df %>% select(Ret12m, Ret2m))
+X_scaled <- ?(X)  
+```
+
+Task: Loop over a grid of K=1:10 potential clusters, use MClust on each iteration of the loop, and compute the loglikelihood, AIC, and BIC for each model
+
+```{r}
+n <- nrow(X)
+K_grid <- 1:10
+gmm_ic_tbl <- lapply(K_grid, function(k) {
+
+  m <- Mclust(data = X_scaled, G = k)
+  ll <- as.numeric(logLik(m))
+  p  <- attr(logLik(m), "df")
+
+  tibble(
+    k = k,
+    logLik = ll,
+    params = p,
+    AIC = -2*ll + 2*p,
+    BIC = -2*ll + log(n)*p,
+  )
+}) %>% bind_rows()
+
+gmm_ic_tbl
+```
+
+Q: What is the implication of the table?
+
+A: 
+
+## Cluster
+
+Task: Form 3 clusters using GMM via Mclust
+
+```{r}
+cluster_gmm3 <- ?(data = ?, G = ?)
+```
+
+Task: Add cluster_id to your df via the cluster_gmm3 classification. Also construct a score as the (1+Ret12m)/(1+Ret2m)-1
+
+```{r}
+df <- df %>%
+  mutate(
+    cluster_id = cluster_gmm3$?,
+    score = ?
+  )
+```
+
+Task: Compute cluster-level average score
+
+```{r}
+cluster_stats <- df %>%
+  group_by(cluster_id) %>%
+  summarise(
+    mu_12m = ?(Ret12m, na.rm = TRUE),
+    mu_2m  = ?(Ret2m,  na.rm = TRUE),
+    mean_score = mean(score,  na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Task: identify Long / Short clusters
+
+```{r}
+long_cluster<- cluster_stats %>% slice_?(mean_score, n = 1) %>% pull(?)
+long_cluster
+short_cluster<- cluster_stats %>% slice_?(mean_score, n = 1) %>% pull(?)
+short_cluster
+```
+
+Task: Add long/short labels to each asset
+
+```{r}
+df <- df %>%
+  mutate(cluster_label = case_when(
+    cluster_id == ?  ~ "Long",
+    cluster_id == ? ~ "Short",
+    TRUE                     ~ "Neutral"
+  ))
+df
+```
+
+Task: add cluster labels to add each cluster
+
+```{r}
+centroids_labeled <- cluster_stats %>%
+  mutate(
+    cluster_id = as.integer(cluster_id),
+    cluster_label = case_when(
+      cluster_id == as.integer(long_cluster)  ~ "Long",
+      cluster_id == as.integer(short_cluster) ~ "Short",
+      TRUE                                    ~ "Neutral"
+    )
+  )
+```
+
+Task: Plot the clusters
+
+```{r}
+ggplot(df %>% mutate(cluster_id = factor(?)),
+       aes(x = Ret2m, y = Ret12m, color = cluster_label)) +
+  geom_point(alpha = 0.75, size = 2) +
+  geom_point(
+    data = centroids_labeled,
+    aes(x = mu_2m, y = mu_12m),
+    inherit.aes = FALSE,
+    size = 4
+  ) +
+  geom_text(
+    data = centroids_labeled,
+    aes(x = mu_2m, y = mu_12m, label = cluster_label),   # <-- add label
+    inherit.aes = FALSE,
+    vjust = -1,
+    show.legend = FALSE
+  ) + 
+  labs(
+    color = "GMM cluster",
+    x = "2-month return",
+    y = "12-month trailing return",
+    title = "GMM (k=3) clusters labeled by momentum score"
+  ) +
+  theme_minimal()
+```
+
+## Construct the Signal
+
+Task: Assign cluster probabilities to conform to the 12-2 momentum signal. Store these probabilities within a df called DegreeBelonging with rows = assets and columns = clusters, with each entry being the degree of belonging.
+
+Task: Gather the posterior probabilities
+
+```{r}
+Z <- cluster_gmm3$?
+stopifnot(nrow(Z) == nrow(df))
+head(Z)
+```
+
+Q: Interpret the first row.
+
+A: 
+
+Task: Rank clusters by mean momentum score
+
+```{r}
+cluster_rank <- df %>%
+  ?(cluster_id) %>%
+  summarise(mean_score = ?(score, na.rm = TRUE), .groups = "drop") %>%
+  arrange(?)
+```
+
+Task: Cluster ids ordered from low-\>high score
+
+```{r}
+ord_ids <- cluster_rank$cluster_id
+short_id <- ord_ids[?]
+long_id  <- ord_ids[?]
+neutral_id <- ord_ids[?]
+```
+
+Task: Build DegreeBelonging: reorder probability columns to (Short, Neutral, Long) Note: columns of Z are labeled 1:K (component numbers)
+
+```{r}
+DegreeBelonging <- as.data.frame(Z[, c(short_id, neutral_id, long_id), drop = FALSE])
+colnames(DegreeBelonging) <- c("Short", "Neutral", "Long")
+rownames(DegreeBelonging) <- df$ticker
+
+DegreeBelonging
+```
+
+Task: Create a scatter plot illustrating the potentially overlapping clusters.
+
+```{r}
+df_overlap <- df %>%
+  mutate(
+    cluster_id = as.integer(cluster_gmm3$classification),
+    max_prob   = apply(Z, 1, max),
+   cluster_label = df$cluster_label
+  )
+
+ggplot(?, aes(x = Ret2m, y = Ret12m)) +
+  geom_point(aes(color = cluster_label, alpha = 1 - max_prob), size = 2) +
+  scale_alpha_continuous(range = c(0.1, 1), guide = "none") +
+  labs(
+    x = "2-month return",
+    y = "12-month return",
+    title = "Overlapping clusters: higher transparency = higher uncertainty (lower max posterior)"
+  ) +
+  theme_minimal()
+```
+
+Task: Cull ambiguous assets. Drop any assets whose max cluster probability less than "confidence threshold", which you can set to 60%.
+
+```{r}
+conf_thresh <- ? 
+keep_idx <- apply(Z, 1, max) > conf_thresh
+
+
+df_culled <- df [keep_idx, ]
+df_culled
+```
+
+Task: Assign clusters. For each of the remaining assets assign the cluster with the highest probability.
+
+```{r}
+cluster_map <- max.col(Z, ties.method = "first")   # returns 1..K
+cluster_assigned <- ?[keep_idx]
+
+df_assigned <- df[keep_idx, ] %>%
+  mutate(cluster_id = as.integer(cluster_assigned))
+
+df_assigned
+```
+
+Task: Create a scatter plot illustrating to which cluster each asset is defined.
+
+```{r}
+ggplot(df_assigned, aes(x = Ret2m, y = Ret12m, color = cluster_label)) +
+  geom_point(alpha = 0.7) +
+  geom_point(
+    data = centroids_labeled ,
+    aes(x = mu_2m, y = mu_12m),
+    inherit.aes = FALSE, size = 4, stroke = 1.5
+  ) +
+  geom_text(
+    data = centroids_labeled ,
+    aes(x = mu_2m, y = mu_12m, label = cluster_label),
+    inherit.aes = FALSE, vjust = -1, show.legend = FALSE
+  ) +
+  labs(
+    color = "GMM cluster",
+    x = "2-month return",
+    y = "12-month trailing return",
+    title = "GMM (k=3) clusters labeled by momentum score"
+  )
+```
+
+Task: Assign signal value to each asset. Your output should be a df where each row is an asset, the column is the position, and each entry is either +1, 0, or -1.
+
+```{r}
+SignalStatic <- df %>%
+  transmute(
+    ticker,
+    signal_position = case_when(
+      cluster_label == "Long"  ~  1L,
+      cluster_label == "Short" ~ -1L,
+      TRUE             ~  0L
+    )
+  )
+
+SignalStatic
+```
+
+## Test the Signal
+
+Task: Call out to signal static to evaluate the efficacy of this signal.
+
+```{r}
+Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "GMM3Momentum")
+  
+signal_position <- data.frame(ticker = SignalStatic$ticker, 
+                              signal_position = SignalStatic$signal_position)
+
+test_returns <- data.frame(ticker = Test.Returns.Constituents$ticker, 
+                           test_returns = Test.Returns.Constituents$OneMthSimpleRet)
+
+return_threshold <- 0.05
+SignalEval <- ?(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+SignalEval
+```
+
+# Signal (Dynamic)
+
+## Restructure Test/Train
+
+Task: Roll your test/train samples from 2017-01-31 through Nov2025
+
+```{r}
+# split data
+test_begin_date <- as.Date("2017-01-31") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date >= test_begin_date) 
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+```
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes.
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+```
+
+
+## Cluster
+
+Task: Let's use K=3 clusters to align with signal construction. Repeat the GMM clustering for each test period. Output should be a long df with cols = (time, assets,cluster 1 prob, cluster 2 prob, cluster 3 prob)
+
+```{r}
+# 12 month and 2 month return
+Train.Returns.Constituents <- Train.Returns.Constituents %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    Ret12m =
+      (1 + lag(OneMthSimpleRet,  0)) *
+      (1 + lag(OneMthSimpleRet,  1)) *
+      (1 + lag(OneMthSimpleRet,  2)) *
+      (1 + lag(OneMthSimpleRet,  3)) *
+      (1 + lag(OneMthSimpleRet,  4)) *
+      (1 + lag(OneMthSimpleRet,  5)) *
+      (1 + lag(OneMthSimpleRet,  6)) *
+      (1 + lag(OneMthSimpleRet,  7)) *
+      (1 + lag(OneMthSimpleRet,  8)) *
+      (1 + lag(OneMthSimpleRet,  9)) *
+      (1 + lag(OneMthSimpleRet, 10)) *
+      (1 + lag(OneMthSimpleRet, 11)) *
+      (1 + lag(OneMthSimpleRet, ?)) - ?,
+    Ret2m =
+?, 
+    
+  ) %>%
+  ungroup() %>%
+  na.omit()
+```
+
+Task: Main loop over each time period in the training set to fit GMM and extract posterior probabilities
+```{r}
+set.seed(1)
+next_month <- function(d) ceiling_date(as.Date(d), "month") %m+% months(1)-days(1)
+
+
+K <- 3L
+relabel_probs_by_score <- function(Z, score_vec) {
+  mean_score <- sapply(1:ncol(Z), function(g) sum(Z[, g] * score_vec) / sum(Z[, g]))
+  ord <- order(mean_score)  # low -> high
+  Z2 <- Z[, ord, drop = FALSE]
+  colnames(Z2) <- c("p_Short", "p_Neutral", "p_Long")
+  Z2
+}
+
+
+# Training period
+dates_vec <- sort(unique(as.Date(Train.Returns.Constituents$Date)))
+
+# main loop
+gmm_probs_labeled_long <- map_dfr(dates_vec, function(date_i) {
+
+  df_t <- Train.Returns.Constituents %>%   
+    filter(as.Date(Date) == as.Date(date_i)) %>%
+    transmute(
+      time  = as.Date(date_i),
+      asset = ticker,
+      Ret12m = as.numeric(Ret12m),
+      Ret2m  = as.numeric(Ret2m)
+    ) %>%
+    filter(is.finite(Ret12m), is.finite(Ret2m)) %>%
+    distinct(time, asset, .keep_all = TRUE) %>%
+    mutate(score = (1 + Ret12m) / (1 + Ret2m) - 1) %>%
+    filter(is.finite(score))
+
+  if (nrow(df_t) < K) {
+    return(tibble(
+      time = df_t$time,
+      asset = df_t$asset,
+      p_Short = NA_real_,
+      p_Neutral = NA_real_,
+      p_Long = NA_real_
+    ))
+  }
+
+
+  # fit GMM
+  X <- as.matrix(df_t %>% select(Ret12m, Ret2m))
+  X_scaled <- scale(X)
+  
+  fit <- tryCatch(
+    suppressMessages(suppressWarnings(
+      Mclust(X_scaled, G = K, verbose = FALSE)
+    )),
+    error = function(e) NULL
+  )
+
+  # If fit failed, return NA probs
+  if (is.null(fit) || is.null(fit$z) || ncol(fit$z) != K) {
+    return(tibble(
+      time = df_t$time,
+      asset = df_t$asset,
+      p_Short = NA_real_,
+      p_Neutral = NA_real_,
+      p_Long = NA_real_
+    ))
+  }
+
+  # Relabel posterior probs to Short/Neutral/Long each period
+  Z <- fit$z
+  Z_labeled <- relabel_probs_by_score(Z, df_t$score)
+
+  # Output long df for this period
+  tibble(
+    time = as.Date(next_month(date_i)),
+    asset = df_t$asset,
+    p_Short   = Z_labeled[, "p_Short"],
+    p_Neutral = Z_labeled[, "p_Neutral"],
+    p_Long    = Z_labeled[, "p_Long"]
+  )
+})
+
+# Result
+gmm_probs_labeled_long
+```
+
+Task: Cull ambiguous assets. Drop any assets whose max cluster probability less than "confidence threshold", which you can set to 60%.
+
+```{r}
+conf_thresh <- 0.60
+Z <- as.matrix(gmm_probs_labeled_long[, c("p_Short", "p_Neutral", "p_Long")])
+
+# keep/drop index
+max_prob <- apply(Z, 1, max)
+keep_idx <- max_prob >= conf_thresh
+
+# culled dataset (keep only confident asset×time rows)
+gmm_probs_culled <- gmm_probs_labeled_long[keep_idx, ] %>%
+  mutate(max_prob = max_prob[keep_idx])
+gmm_probs_culled
+```
+
+Task: Assign clusters. For each of the remaining assets assign the cluster with the highest probability.
+
+```{r}
+Zc_culled <- as.matrix(gmm_probs_culled[, c("p_Short", "p_Neutral", "p_Long")])
+
+gmm_assigned_culled <- gmm_probs_culled %>%
+  mutate(
+    cluster_label = c("Short", "Neutral", "Long")[max.col(Zc_culled, ties.method = "first")]
+  ) %>%
+  select(-p_Short, -p_Neutral, -p_Long)
+
+gmm_assigned_culled
+```
+
+## Construct the Signal
+
+Task: Assign signal value to each asset. Your output should be a df where cols = (time, asset, position), where signal position {+1, 0, or -1}.
+
+```{r}
+Zc <- as.matrix(gmm_probs_labeled_long[, c("p_Short", "p_Neutral", "p_Long")])
+
+gmm_assigned <- gmm_probs_labeled_long %>%
+  mutate(
+    cluster_label = c("Short", "Neutral", "Long")[max.col(Zc, ties.method = "first")]
+  ) %>%
+  select(-p_Short, -p_Neutral, -p_Long)
+
+gmm_assigned
+```
+
+Task: Form the signal matrix
+
+```{r}
+SignalDynamic <- gmm_assigned %>%
+  transmute(
+    time,
+    asset,
+    position = case_when(
+      cluster_label == "Long"  ~  1L,
+      cluster_label == "Short" ~ -1L,
+      TRUE             ~  0L
+    )
+  )
+
+SignalDynamic
+```
+
+## Test the Signal
+
+Task: Call out to signal evaluation dynamic to evaluate the efficacy of this signal.
+
+```{r}
+returns_panel <- Test.Returns.Constituents %>% 
+  filter(Date %in% unique(SignalDynamic$time)) %>%
+  transmute(ticker, date = Date, test_returns = OneMthSimpleRet)
+
+signal_position_panel <- SignalDynamic %>% 
+  transmute(ticker = asset, date = time, signal_position = position)
+
+Meta <- list(assetname = "Universe", benchmarkname = "SP500", signalname = "GMMMomentum")
+
+res_dyn <- ?(
+  signal_position_ts = signal_position_panel,
+  returns_ts = returns_panel,
+  Meta = Meta,
+  return_threshold = 0.05,    # direction mode effectively in static
+  keep_static_results = FALSE,
+  verbose = TRUE
+)
+```
