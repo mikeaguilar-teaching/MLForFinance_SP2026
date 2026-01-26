@@ -21,7 +21,7 @@ cat("\014")  # clear console
 rm(list=ls())  # Clear the workspace
 if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
 suppressPackageStartupMessages(library(here))
-?
+source(here("Supporting", "PackageLoads.R"))
 
 ```
 
@@ -38,7 +38,7 @@ Momentum <- ?(here("Data","SP500_Mthly_Momentum.csv"))
 Task: Create test_date as 9/30/2025 and compute the last train date as one month prior
 
 ```{r}
-test_date <- ?("2025-09-30") 
+test_date <- as.Date("2025-09-30") 
 last_train_date <- as.Date(
   format(test_date, "%Y-%m-01")  ) - 1
 ```
@@ -46,9 +46,9 @@ last_train_date <- as.Date(
 Task: Create Train.Momentum.Constituents which contains all the dates in the traning period only for the SP500 constituents
 
 ```{r}
-Train.Momentum.Constituents <- ? %>%
+Train.Momentum.Constituents <- Momentum %>%
   filter(Date <= last_train_date) %>%
-  filter(!ticker == "SP500")
+  filter(!ticker == ?)
 ```
 
 # Signal Construction
@@ -78,14 +78,14 @@ Signal_Matrix
 Task: Load SP500 Daily Simple Returns
 
 ```{r}
-SP500_Daily_SimpleReturns<-read.csv(here("?","SP500_Daily_SimpleReturns.csv"))
+SP500_Daily_SimpleReturns<-read.csv(?("Data","SP500_Daily_SimpleReturns.csv"))
 ```
 
 Task: ensure Date is Date class
 
 ```{r}
 SP500_Daily_SimpleReturns <- SP500_Daily_SimpleReturns %>%
-  ?(Date = as.Date(Date))
+  mutate(Date = as.Date(Date))
 ```
 
 Task: Filter test period (dates AFTER last_train)
@@ -107,7 +107,7 @@ weight_df <- Signal_Matrix %>%
   transmute(
     ticker,
     Date,
-    weight = ?) 
+    weight = signal_matrix) 
 weight_df
 
 ```
@@ -115,9 +115,9 @@ weight_df
 Task: Construct the portfolio
 
 ```{r}
-Port.Raw <- ?(
-    test_returns,
-    weight_df,
+Port.Raw <- construct_portfolio(
+    ?,
+    ?,
     # column names in inputs
     date_col   = "Date",
     ticker_col = "ticker",
@@ -134,7 +134,7 @@ Task: Plot the port_index over time
 
 ```{r}
 Port.Raw$portfolio %>%
-  ggplot(aes(x = date, ? = port_index)) +
+  ggplot(aes(x = date, y = ?)) +
   geom_line(color = "blue") +
   labs(title = "Portfolio Index Over Time",
        x = "",
@@ -145,47 +145,66 @@ Port.Raw$portfolio %>%
 Task: Display the portfolio holdings
 
 ```{r}
-Port.Raw$holdings
+head(Port.Raw$?, 50)
 ```
 
 Task: Display the portfolio time series
 
 ```{r}
-Port.Raw$portfolio
+Port.Raw$?
 ```
 
 Q: What does gross exposure mean?
 
 A:
 
-Q: Why doesn't gross exposure change throughout the sample?
 
-Q: Why isn't gross exposure = 100?
 
-A:
+Q: Why can't you use that short sale cash to reduce the amount you borrow in practice? 
+
+A: 
+
+Q: Contrast the meaning of gross exposure, pnl, port_ret, port index. 
+
+A: 
+
+
+
 
 # Fully Invested Weights
 
-Task: Create a weight dataframe. Set the weight equal to the signal value.
 
+
+Task: Compute the gross_scale as the sum of the abs value of the signals
 ```{r}
-gross_scale <- sum(Signal_Matrix$signal_matrix)
+gross_scale <- ?(abs(Signal_Matrix$signal_matrix))
 gross_scale
-
-fullyinvested_weights_df <- weight_df %>%
-  mutate(weight = Signal_Matrix$signal_matrix / ?)
-
-
-sum(fullyinvested_weights_df$weight)
-
 ```
+Q: What is the meaning of gross_scale in our strategy context? Why different from gross_exposure? 
 
-Task: Construct the portfolio
+A: 
+
+
+
+Task: Create fully invested weights dataframe by dividing the signal by gross_scale
+```{r}
+fullyinvested_weights_df <- weight_df %>%
+  mutate(weight = Signal_Matrix$signal_matrix ?)
+
+sum(abs(fullyinvested_weights_df$weight)) 
+```
+Q: What's the intuition behind constructing the strategy weights this way? 
+
+A: 
+
+
+
+Task: Construct the portfolio using construct_portfolio
 
 ```{r}
-Port.FullyInvested <- ?(
-    test_returns,
-    fullyinvested_weights_df,
+Port.FullyInvested <- construct_portfolio(
+    ?,
+    ?,
     # column names in inputs
     date_col   = "Date",
     ticker_col = "ticker",
@@ -202,7 +221,7 @@ Task: Plot the port_index over time
 
 ```{r}
 Port.FullyInvested$portfolio %>%
-  ggplot(aes(? = date, y = port_index)) +
+  ggplot(aes(x = date, y = ?)) +
   geom_line(color = "blue") +
   labs(title = "Portfolio Index Over Time",
        x = "",
@@ -223,10 +242,14 @@ combined_portfolio <- Port.Raw$portfolio %>%
 combined_portfolio %>%
   ggplot(aes(x = date)) +
   geom_line(aes(y = raw_port_index, color = "Raw Weights")) +
-  geom_line(aes(y = fully_invested_port_index, color = "Fully Invested Weights")) +
+  geom_line(aes(y = ?, color = "Fully Invested Weights")) +
   labs(title = "Portfolio Index Comparison",
        x = "",
        y = "Portfolio Index") +
   scale_color_manual(values = c("Raw Weights" = "blue", "Fully Invested Weights" = "red")) +
   theme_minimal()
 ```
+Q: Why is there such a large difference between these seemingly similar strategies?
+
+A: 
+
