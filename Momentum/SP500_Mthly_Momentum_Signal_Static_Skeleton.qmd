@@ -21,7 +21,7 @@ cat("\014")  # clear console
 rm(list=ls())  # Clear the workspace
 if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
 suppressPackageStartupMessages(library(here))
-?
+source(here("Supporting", "PackageLoads.R"))
 
 ```
 
@@ -32,7 +32,7 @@ suppressPackageStartupMessages(library(here))
 Task: Load SP500-Monthly Simple Returns
 
 ```{r}
-Returns <- ?(here("Data","SP500_Mthly_SimpleReturns.csv"))
+Returns <- read.csv(?("Data","SP500_Mthly_SimpleReturns.csv"))
 ```
 
 ## Load monthly momentum from GitHub
@@ -47,7 +47,7 @@ Task: Merge the returns and momentum, retaining only those dates with complete i
 
 ```{r}
 merged_df <- Returns %>%
-  left_join(Momentum, ? = c("Date", "ticker"))
+  left_join(Momentum, by = c("?", "ticker"))
 
 ```
 
@@ -61,11 +61,11 @@ test_date <- as.Date("2025-09-30")
 last_train_date <- as.Date(
   format(test_date, "%Y-%m-01")  ) - 1
 
-Train <- merged_df ? filter(Date < test_date)
+Train <- merged_df %>% filter(Date ? test_date)
 Train.Returns  <- Train %>% select(!momentum)
 Train.Momentum <- Train %>% select(!OneMthSimpleRet)
 
-Test <- merged_df %>% ?(Date == test_date)
+Test <- merged_df %>% filter(Date ? test_date)
 Test.Returns  <- Test %>% select(!momentum)
 Test.Momentum <- Test %>% select(!OneMthSimpleRet)
 
@@ -77,15 +77,15 @@ Task: Isolate the returns for the index and the group of constituents into separ
 
 ```{r}
 Train.Constituents <- Train %>%
-  filter(? == "SP500")
+  filter(!ticker == ?)
 Train.Returns.Index <- Train.Returns %>%
-  filter(ticker == "SP500")
+  filter(ticker == ?)
 Train.Returns.Constituents <- Train.Returns %>%
-  filter(!ticker == "SP500")
+  filter(? == "SP500")
 Train.Momentum.Index <- Train.Momentum %>%
-  filter(ticker == "SP500")
+  filter(? == "SP500")
 Train.Momentum.Constituents <- Train.Momentum %>%
-  filter(!ticker == "SP500")
+  filter(? == "SP500")
 
 Test.Constituents <- Test %>%
   filter(!ticker == "SP500")
@@ -114,7 +114,7 @@ Task: Create a dataframe that contains the momentum on the last observation of t
 
 ```{r}
 
-Signal_Matrix <- ? %>% 
+Signal_Matrix <- Train.Momentum.Constituents %>% 
   filter(Date == last_train_date) %>%
   select(ticker, momentum) %>% 
   rename("signal_matrix" = "momentum")
@@ -122,7 +122,7 @@ Signal_Matrix <- ? %>%
 Signal_Matrix
 ```
 
-Task: Create a dataframe that takes +1,0,-1 based upon long, neutral, short positioning. Long of signal \> tau. Short if signal less than -tau. Neutral otherwise.
+Task: Create a dataframe that takes +1,0,-1 based upon long, neutral, short positioning. Long if signal \> tau. Short if signal less than -tau. Neutral otherwise.
 
 ```{r}
 
@@ -131,9 +131,9 @@ tau <- 0
 Signal_Position <- Signal_Matrix %>%
   transmute(
     ticker,
-    signal = ?(
-      signal_matrix >  tau  ~  1L,
-      signal_matrix < -tau  ~ -1L,
+    signal = case_when(
+      signal_matrix >  ?  ~  1L,
+      signal_matrix < ?  ~ -1L,
       TRUE             ~  0L
     )
   ) %>%
@@ -141,7 +141,17 @@ Signal_Position <- Signal_Matrix %>%
 
 Signal_Position
 
+# Note: the "L" tells R to store the +1,0,-1 as integers rather than numerics, which is more efficient for storage. 
+
 ```
+
+Q: Why no 0s in the Signal_Position Matrix? 
+
+A: 
+
+- 
+
+
 
 # Evaluate
 
@@ -158,7 +168,6 @@ Task: Create meta labels
 ```{r}
  Meta <- list(
    assetname = "asset",
-   benchmarkname = "benchmark",
    signalname = "Momentum"
  )
 ```
@@ -168,42 +177,82 @@ Task: Implement the Signal Evaluation Static function
 ```{r}
 return_threshold = 0
 
-  SignalEval <- ?(
-    test_returns = test_returns,
+  SignalEval <- signal_evaluation_static(
+    test_returns = ?,
     Meta = Meta,
-    return_threshold = return_threshold,
+    return_threshold = ?,
     signal_position = Signal_Position
   )
 ```
 
-Task: Display and interpret the Trade results
+Q: What's the difference in meaning of tau and return_threshold? 
+
+A: 
+
+
+
+Q: What if set tau very large? What is the (dis)advantage?
+
+A: 
+
+
+
+
+Q: What if set return threshold very large? What is the (dis)advantage?
+
+A: 
+
+
+
+Task: Display the Trade results
 
 ```{r}
-SignalEval$TradeResults_Percent
+SignalEval$?
 ```
+
+Q: Interpret the trade results. Can you comment on how active was the signal? Connect that to "coverage". 
 
 A:
 
-Task: Display and interpret the hit table
+
+
+Q: Do you remember on what period are we testing? What is the frequency of the data? 
+
+A: 
+
+
+
+Task: Display the hit table
 
 ```{r}
-SignalEval$hit_table
+SignalEval$?
 ```
+
+Q: Interpret. Comment on the statistical significance. Why are the 2 columns of results the same? 
 
 A:
 
-Task: Display and interpret the Info Coeffient
+
+Task: Display the Info Coefficient
 
 ```{r}
-SignalEval$summary_ic_tbl
+SignalEval$?
 ```
+
+Q: Interpret. What is the difference in the conceptual meaning of Hit Rate and IC? Comment on the statistical significance. 
 
 A:
 
-Task: Display and interpret the confusion matrix. Focus on the Recall, Specificity, and Type 1 error for Long and Short.
+
+
+Task: Display the confusion matrix. 
 
 ```{r}
-SignalEval$confusion_report
+SignalEval$?
 ```
 
+Q: Interpret with a focus on Recall, Specificity, and Type 1 error for Longs and Shorts. Do we capture more of the upside or downside? Do we avoid more bad longs or bad shorts? Did we make more mistakes on the long or short side? 
+
 A:
+
+
