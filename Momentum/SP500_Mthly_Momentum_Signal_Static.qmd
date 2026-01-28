@@ -1,0 +1,283 @@
+---
+title: "Momentum Signal"
+subtitle: "Constructing and evaluating a static momentum signal"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "PackageLoads.R"))
+
+```
+
+# Data
+
+## Load simple returns
+
+Task: Load SP500-Monthly Simple Returns
+
+```{r}
+Returns <- read.csv(here("Data","SP500_Mthly_SimpleReturns.csv"))
+```
+
+## Load monthly momentum from GitHub
+
+```{r}
+Momentum <- read.csv(here("Data","SP500_Mthly_Momentum.csv"))
+```
+
+## Merge
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- Returns %>%
+  left_join(Momentum, by = c("Date", "ticker"))
+
+```
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset to Aug2025. Call this dataframe Test. Create a dataframe for the Train period which is Sep2025 period. Call this dataframe Train.
+
+```{r}
+
+test_date <- as.Date("2025-09-30") 
+last_train_date <- as.Date(
+  format(test_date, "%Y-%m-01")  ) - 1
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(Date == test_date)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes. Repeat for momentum.
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(!ticker == "SP500")
+Train.Returns.Index <- Train.Returns %>%
+  filter(ticker == "SP500")
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+
+```
+
+# Signal Construction
+
+Task: Construct a simple momentum strategy
+
+-   Define LongCondition = 1 if $mom^{Train}_{i} >0$ and 0 otherwise
+
+-   Define ShortCondition = 1 if $mom^{Train}_{i} < 0$ and 0 otherwise
+
+-   $s_{i,t}$ = LongCondition minus ShortCondition
+
+Task: Create a dataframe that contains the momentum on the last observation of the training period
+
+```{r}
+
+Signal_Matrix <- Train.Momentum.Constituents %>% 
+  filter(Date == last_train_date) %>%
+  select(ticker, momentum) %>% 
+  rename("signal_matrix" = "momentum")
+
+Signal_Matrix
+```
+
+Task: Create a dataframe that takes +1,0,-1 based upon long, neutral, short positioning. Long if signal \> tau. Short if signal less than -tau. Neutral otherwise.
+
+```{r}
+
+tau <- 0
+
+Signal_Position <- Signal_Matrix %>%
+  transmute(
+    ticker,
+    signal = case_when(
+      signal_matrix >  tau  ~  1L,
+      signal_matrix < -tau  ~ -1L,
+      TRUE             ~  0L
+    )
+  ) %>%
+  rename("signal_position" = "signal")
+
+Signal_Position
+
+# Note: the "L" tells R to store the +1,0,-1 as integers rather than numerics, which is more efficient for storage. 
+
+```
+
+Q: Why no 0s in the Signal_Position Matrix?
+
+A:
+
+-   We set tau = 0, so only exact 0 momentum values would generate neutral signals.
+
+# Evaluate
+
+Task: Format Test period returns to conform to the Signal Testing function
+
+```{r}
+test_returns <- Test.Returns.Constituents %>%
+  select(ticker,OneMthSimpleRet) %>%
+  rename(test_returns = OneMthSimpleRet)
+```
+
+Task: Create meta labels
+
+```{r}
+ Meta <- list(
+   assetname = "asset",
+   #benchmarkname = "benchmark",
+   signalname = "Momentum"
+ )
+```
+
+Task: Implement the Signal Evaluation Static function
+
+```{r}
+return_threshold = 0
+
+  SignalEval <- signal_evaluation_static(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = Signal_Position
+  )
+```
+
+Q: What's the difference in meaning of tau and return_threshold?
+
+A:
+
+-   Tau captures the signal cutoff for going long/short/neutral.
+-   Return Threshold captures the minimum return that counts as a positive return for hit rate and confusion matrix calculations.
+-   Each of these can and should be tuned separately.
+-   Tuning can be done via grid search, optimization, or via discretion based upon domain knowledge.
+
+Q: What if set tau very large? What is the (dis)advantage?
+
+A:
+
+-   Advantage: You only trade when the signal is very strong, which may improve hit rates and reduce transaction costs.
+-   Disadvantage: You may have many neutral signals, leading to fewer trades and potentially missing opportunities.
+
+Q: What if set return threshold very large? What is the (dis)advantage?
+
+A:
+
+-   Advantage: You focus on significant returns, which may improve the quality of your trades.
+-   Disadvantage: You may ignore smaller but consistent returns, which could lead to missed opportunities
+
+Task: Display the Trade results
+
+```{r}
+SignalEval$TradeResults_Percent
+```
+
+Q: Interpret the trade results. Can you comment on how active was the signal? Connect that to "coverage".
+
+A:
+
+-   No neutral signals. i.e. we traded every asset
+-   Coverage is therefore 100%
+-   We had 63.7% of trades long and 36.3% short
+
+Q: Do you remember on what period are we testing? What is the frequency of the data?
+
+A:
+
+-   We defined test returns as Sep2025
+-   The data is monthly
+
+Task: Display the hit table
+
+```{r}
+SignalEval$hit_table
+```
+
+Q: Interpret. Comment on the statistical significance. Why are the 2 columns of results the same?
+
+A:
+
+-   56.9% of long signals had positive returns in Sep2025
+-   The low p value suggests that we reject the null that the Hit Rate = 0, implying that the signal has some predictive power
+-   Notice that the overall hit rate is the same as the Acted Only hit rate since we had no neutral signals
+
+Task: Display the Info Coefficient
+
+```{r}
+SignalEval$summary_ic_tbl
+```
+
+Q: Interpret. What is the difference in the conceptual meaning of Hit Rate and IC? Comment on the statistical significance.
+
+A:
+
+-   Hit Rate is rather binary in nature; If I'm long, were returns positive? If so, that's a "hit".
+-   The IC is more continuous in nature; how strongly is my position (+1,0,-1) correlated with the actual returns?
+-   The IC of .1534 implies that the correlation between the signal and test period returns is positive
+-   The small pvalue suggests that we reject the null that IC = 0, implying that the signal has predictive power over test period returns
+-   Note: The Overall and Acted Only can be slightly different for IC even with 100% Coverage. Recall that for Acted Only our Signal Position is +1,-1. To compute the correlation with Test Period Returns we use a bi-point serial correlation, which is slightly different than the typical Pearson Correlation. The bi-point serial correlation in this case permits us to say our signal works because longs beat shorts by .153bps, scaled by volatility.
+
+Task: Display the confusion matrix.
+
+```{r}
+SignalEval$confusion_report
+```
+
+Q: Interpret with a focus on Recall, Specificity, and Type 1 error for Longs and Shorts. Do we capture more of the upside or downside? Do we avoid more bad longs or bad shorts? Did we make more mistakes on the long or short side?
+
+A:
+
+-   Recall for long suggests that 71% of the observations where test period returns were positive, we went long. Meanwhile, Recall for shorts suggests that 43% of observations where test period returns were negative, we went short. i.e. we capture more of the upside with Long than we captured the downside with Shorts.
+
+-   Specificity for long suggests that 43% of the observations with negative returns, we correctly did not long. Meanwhile specificity for shorts suggests that 71% of the observations with positive returns, we correctly did not short. i.e. we avoid more of the bad shorts than the bad longs.\
+
+-   Type 1 error for long suggests that in 57% of the negative test period returns we mistakenly went long. Meanwhile the type 1 error for shorts suggests that in 29% of the positive test periods we mistakenly went short. i.e. we made more mistakes with longs than shorts.
+
+-   Accuracy: I got the sign of the signal right 57% of the time for both Longs and Shorts.
+
+-   Precision: When I went long, I was right 55% of the time. When I went short, I was right 59% of the time.
+
+-   Type 2 Error: I missed 29% of the winning long trades and 57% of the winning shorts.\
+
+-   We will skip f1 and mcc until we study classification methods more deeply.
